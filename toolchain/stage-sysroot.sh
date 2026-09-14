@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Stage the C-library headers Mesa compiles against into toolchain/sysroot/usr/include.
+#
+# The source is the FreeBSD checkout the collection already keeps, pinned by revision in
+# dependencies.mk (D004). Headers are read out of that checkout's object store with
+# `git archive`, so this never writes to it, never changes its sparse-checkout configuration
+# and cannot disturb orbistoun's constant harvest, which reads the same tree.
+#
+# The checkout is a partial clone (`filter=blob:none`), so blobs outside its sparse cone are
+# fetched from its own origin the first time they are asked for. That is the one network access
+# here and it happens once.
+#
+# # An installed header set is not a copy of include/
+#
+# FreeBSD's `include/Makefile` builds `/usr/include` from three places, and a directory copy
+# gets only the first. The lists below are read from that Makefile rather than guessed, because
+# getting them wrong is silent: the first attempt here copied `include/` alone and Mesa's very
+# first configure probe failed on a missing `errno.h`, which is one of the nine headers the
+# Makefile links out of `sys/sys` rather than shipping in `include`.
+#
+#   include/*.h and its subdirectories   ->  usr/include/
+#   LHDRS, nine headers from sys/sys     ->  usr/include/            (errno.h, fcntl.h, ...)
+#   LDIRS, directories under sys/        ->  usr/include/<dir>/      (sys/, net/, netinet/, ...)
+#   sys/amd64/include                    ->  usr/include/machine/
+#   sys/x86/include                      ->  usr/include/x86/
+#   lib/msun/src/math.h                  ->  usr/include/math.h      (it ships with libm)
+#
+# Run it through the verb, not directly: ./bin/oops-mesa build stages before it configures.
+set -eu
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd "$HERE/.." && pwd)
+SYSROOT="$HERE/sysroot"
+INC="$SYSROOT/usr/include"   # where clang -target x86_64-unknown-freebsd --sysroot looks
+
+# The pin and the source name, read from the one file that holds them.
+PIN=$(sed -n 's/^SYSROOT_PIN *:= *//p' "$ROOT/dependencies.mk")
+SRC_NAME=$(sed -n 's/^SYSROOT_SOURCE *:= *//p' "$ROOT/dependencies.mk")
+
+# Where the checkout is. Named by a variable rather than assumed, because it lives outside this
+# repository and there is no reason every machine puts it in one place - the same shape
+# orbistoun uses for the same tree.
+SRC="${OOPS_MESA_FREEBSD_SRC:-$ROOT/../../$SRC_NAME}"
+
+if [ ! -d "$SRC/.git" ]; then
+    echo "oops-mesa: no $SRC_NAME checkout at $SRC" >&2
+    echo "  set OOPS_MESA_FREEBSD_SRC to it, or clone it beside the collection." >&2
+    exit 1
+fi
+
+actual=$(git -C "$SRC" rev-parse HEAD)
+if [ "$actual" != "$PIN" ]; then
+    echo "oops-mesa: $SRC_NAME is at $actual, dependencies.mk pins $PIN" >&2
+    echo "  the headers Mesa compiles against are part of the build's identity (D004)." >&2
+    exit 1
+fi
+
+# The two lists, verbatim from include/Makefile at the pin. They are repeated here rather than
+# parsed out of it because a silent parse failure would look exactly like a correct empty list,
+# and the check below catches them drifting instead.
+LHDRS="aio.h errno.h fcntl.h linker_set.h poll.h stdatomic.h stdint.h syslog.h ucontext.h"
+LDIRS="net netinet sys vm"
+
+# If the Makefile's own LHDRS no longer matches, say so rather than staging a stale set.
+makefile_lhdrs=$(git -C "$SRC" show "$PIN:include/Makefile" \
+    | sed -n '/^LHDRS=/,/^$/p' | sed 's/^LHDRS=//' | tr -d '\\\n\t' | tr -s ' ')
+for h in $LHDRS; do
+    case " $makefile_lhdrs " in
+        *" $h "*) ;;
+        *) echo "oops-mesa: include/Makefile no longer links $h; re-read its LHDRS" >&2; exit 1 ;;
+    esac
+done
+
+# extract <tree path> <destination under usr/include>
+# `git archive` reads the pinned commit's tree, so the checkout's working tree and its sparse
+# configuration are never consulted and never changed.
+extract() {
+    local from="$1" to="$2" strip
+    strip=$(printf '%s' "$from" | awk -F/ '{print NF}')
+    mkdir -p "$INC/$to"
+    git -C "$SRC" archive "$PIN" "$from" | tar -x -C "$INC/$to" --strip-components="$strip"
+}
+
+rm -rf "$SYSROOT"
+mkdir -p "$INC"
+
+extract include            .
+extract sys/amd64/include  machine
+extract sys/x86/include    x86
+for d in $LDIRS; do extract "sys/$d" "$d"; done
+
+# The nine headers include/Makefile links out of sys/sys rather than shipping itself.
+for h in $LHDRS; do
+    [ -f "$INC/sys/$h" ] && cp "$INC/sys/$h" "$INC/$h"
+done
+
+# math.h ships with the maths library rather than in include/, because the build picks a
+# per-architecture variant at install time; amd64 uses the generic one.
+git -C "$SRC" archive "$PIN" lib/msun/src/math.h | tar -x -C "$INC" --strip-components=3
+
+# Architectures we are not, staged only because they sit inside include/.
+rm -rf "$INC/arm" "$INC/i386"
+# Everything that is not a header: the source directories above carry their .c files too.
+find "$INC" -type f ! -name '*.h' -delete
+find "$INC" -type d -empty -delete
+
+# osreldate.h is generated by FreeBSD's build rather than shipped, from the one number in
+# sys/sys/param.h, which is what include/mk-osreldate.sh does. Anything including <osreldate.h>
+# wants that number and nothing else; libelf's portability header is the first thing here to
+# ask for it.
+osreldate=$(sed -n 's/^#define[[:space:]]*__FreeBSD_version[[:space:]]*\([0-9]*\).*/\1/p' \
+    "$INC/sys/param.h" | head -1)
+if [ -z "$osreldate" ]; then
+    echo "oops-mesa: no __FreeBSD_version in sys/param.h; cannot generate osreldate.h" >&2
+    exit 1
+fi
+cat > "$INC/osreldate.h" <<EOF
+/* Generated by oops-mesa toolchain/stage-sysroot.sh, as FreeBSD's include/mk-osreldate.sh
+ * generates it: the one version number out of sys/sys/param.h at the pinned revision. */
+#ifdef _KERNEL
+#error "osreldate.h must not be used in the kernel, use sys/param.h"
+#else
+#undef __FreeBSD_version
+#define __FreeBSD_version $osreldate
+#endif
+EOF
+
+# The C++ standard library. Mesa is not a C project: its ACO shader backend, its ASTC tables and
+# parts of its utility layer are C++, so a C-only sysroot stops the build a few hundred objects
+# in. These are the platform's own libc++ headers from the same pinned tree, and `__config_site`
+# and `__assertion_handler` are FreeBSD's generated pair from `lib/libc++`, which is the
+# authoritative configuration rather than a plausible one: libc++'s headers refuse to compile
+# without it and every value in it is a platform decision.
+mkdir -p "$INC/c++/v1"
+git -C "$SRC" archive "$PIN" contrib/llvm-project/libcxx/include \
+    | tar -x -C "$INC/c++/v1" --strip-components=4
+for f in __config_site __assertion_handler; do
+    git -C "$SRC" show "$PIN:lib/libc++/$f" > "$INC/c++/v1/$f"
+done
+
+missing=""
+for h in errno.h stdio.h stdlib.h string.h pthread.h math.h time.h fcntl.h stdint.h osreldate.h \
+         c++/v1/cstdint c++/v1/mutex c++/v1/__config_site; do
+    [ -f "$INC/$h" ] || missing="$missing $h"
+done
+if [ -n "$missing" ]; then
+    echo "oops-mesa: staged sysroot is missing:$missing" >&2
+    exit 1
+fi
+
+printf 'oops-mesa: staged %s headers into toolchain/sysroot from %s @ %s\n' \
+    "$(find "$INC" -name '*.h' | wc -l | tr -d ' ')" "$SRC_NAME" "${PIN:0:12}"

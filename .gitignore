@@ -1,0 +1,19 @@
+# Build output of the shims and of Mesa. Mesa's own tree is a submodule and is never built in
+# place; the container build writes here.
+build/
+dist/
+
+# The pinned C-library headers are fetched into an ignored directory and verified against the
+# pin in dependencies.mk; they are never tracked (OOPS conventions, section 1).
+toolchain/sysroot/
+
+# libelf's sources, staged from the same pinned checkout for the same reason (D005). Upstream's
+# code, carried through the build rather than kept here.
+toolchain/libelf-src/
+toolchain/libcxx-src/
+
+# Editor and OS noise.
+*.swp
+.DS_Store
+Thumbs.db
+toolchain/platform-stubs.c

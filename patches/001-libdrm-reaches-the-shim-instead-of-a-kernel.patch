@@ -1,0 +1,100 @@
+# 001-libdrm-reaches-the-shim-instead-of-a-kernel.patch
+#
+# What it changes
+#   Three call sites in libdrm, all guarded by OOPS_MESA_WINSYS so the patch is inert anywhere
+#   else. drmIoctl calls the shim instead of ioctl(2); drm_mmap calls it instead of mmap(2); and
+#   device initialisation keeps the descriptor it was given rather than duplicating it with
+#   fcntl(F_DUPFD_CLOEXEC). Nothing else is touched, and no behaviour changes when the define is
+#   off.
+#
+#   The third is there because the descriptor is a token naming the one device this shim serves
+#   rather than a kernel object, so there is nothing for fcntl to duplicate. Keeping the same
+#   token leaves dev->fd equal to dev->flink_fd, which is what libdrm's own release path already
+#   expects, so it closes once and that close is a no-op in the shim.
+#
+# Why it could not be a shim
+#   libdrm calls libc's ioctl and mmap directly by name. The only way to intercept that without
+#   editing the call sites is to define those symbols ourselves and let them win at link time,
+#   which would capture every ioctl and mmap the title makes - its own file access, its own
+#   memory - and route them into a graphics winsys. Changing two call sites is smaller, and it
+#   is confined to the library that should be talking to a kernel and has none.
+#
+# Why it is not upstreamable as-is
+#   It is a port to a platform upstream has no knowledge of. If this were ever offered upstream
+#   it would want to be a build-time backend selection rather than two ifdefs, which is a larger
+#   change than this project needs and would be worth making only if someone else wanted it.
+#
+# Applies to: libdrm 2.4.133, the version Mesa pins by hash in subprojects/libdrm.wrap (D005).
+--- a/subprojects/libdrm-2.4.133/xf86drm.c	2026-09-14 18:07:14.696431900 +0100
++++ b/subprojects/libdrm-2.4.133/xf86drm.c	2026-09-14 18:07:14.753426200 +0100
+@@ -76,6 +76,9 @@
+ #endif
+ 
+ #include "xf86drm.h"
++#ifdef OOPS_MESA_WINSYS
++#include "oops_winsys.h"
++#endif
+ #include "libdrm_macros.h"
+ #include "drm_fourcc.h"
+ 
+@@ -692,10 +695,21 @@
+ {
+     int ret;
+ 
++#ifdef OOPS_MESA_WINSYS
++    /* There is no kernel to call here. The shim answers the command set directly and returns a
++     * negative errno, where ioctl returns -1 and sets errno, so the two are reconciled. */
++    ret = oops_winsys_ioctl(fd, request, arg);
++    if (ret < 0) {
++        errno = -ret;
++        return -1;
++    }
++    return 0;
++#else
+     do {
+         ret = ioctl(fd, request, arg);
+     } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+     return ret;
++#endif
+ }
+ 
+ static unsigned long drmGetKeyFromFd(int fd)
+--- a/subprojects/libdrm-2.4.133/libdrm_macros.h	2026-09-14 18:07:14.714001200 +0100
++++ b/subprojects/libdrm-2.4.133/libdrm_macros.h	2026-09-14 18:07:32.243486300 +0100
+@@ -67,8 +67,17 @@
+ #else
+ 
+ /* assume large file support exists */
+-#  define drm_mmap(addr, length, prot, flags, fd, offset) \
++#  ifdef OOPS_MESA_WINSYS
++/* The buffer being mapped was never a file. The shim turns the token GEM_MMAP handed back into
++ * the pointer of the allocation behind it, so the address hint and the protection flags have
++ * nowhere to go and are deliberately not passed on. */
++#    include "oops_winsys.h"
++#    define drm_mmap(addr, length, prot, flags, fd, offset) \
++              oops_winsys_mmap_or_failed(fd, length, offset)
++#  else
++#    define drm_mmap(addr, length, prot, flags, fd, offset) \
+               mmap(addr, length, prot, flags, fd, offset)
++#  endif
+ 
+ 
+ static inline int drm_munmap(void *addr, size_t length)
+--- a/subprojects/libdrm-2.4.133/amdgpu/amdgpu_device.c	2026-09-14 18:32:46.158458100 +0100
++++ b/subprojects/libdrm-2.4.133/amdgpu/amdgpu_device.c	2026-09-14 18:32:51.646280100 +0100
+@@ -252,7 +252,15 @@
+ 		goto cleanup;
+ 	}
+ 
++#ifdef OOPS_MESA_WINSYS
++	/* The descriptor is a token naming the one device this shim serves, not a kernel object,
++	 * so there is nothing to duplicate. Keeping the same token leaves dev->fd equal to
++	 * dev->flink_fd, which is what the release path below already expects, and closing it is a
++	 * no-op in the shim. */
++	dev->fd = fd;
++#else
+ 	dev->fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
++#endif
+ 	dev->flink_fd = dev->fd;
+ 	dev->major_version = version->version_major;
+ 	dev->minor_version = version->version_minor;
