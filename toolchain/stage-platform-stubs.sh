@@ -46,9 +46,14 @@ sweep=$(sed -n 's/^OBS|sweep|\([^|]*\).*/\1/p' "$CENSUS" | head -1)
 # to replace the argument with a measurement. Nothing enters this list because it would be
 # convenient; each line has to say what makes it more than a guess.
 #
-#   clock_gettime   the census records `clock_settime` present in the same library and
-#                   `sceKernelClockGettime` present beside it, so the getter is missing from the
-#                   mine rather than from the platform. REQ-20260914T1636Z-4c92.
+#   clock_gettime   now measured present, not merely argued for. obSCEne's payload-leg sweep
+#                   20260915-203058 (017-posix/clock-symbols) resolves `clock_gettime` in both
+#                   `libkernel` and `libSceLibcInternal` (as it does `clock_getres`, `nanosleep`,
+#                   `sched_yield`, `gettimeofday`). It is missing from the census only because the
+#                   eboot-leg census resolver is blind - `sceKernelGetModuleList` exposes two
+#                   module handles on a native title - not because the platform lacks it
+#                   (REQ-20260914T1636Z-4c92 answered; resolver artifact, REQ-...-66c3). This line
+#                   stays until obSCEne folds the name into ps5-imports.txt; then it can go.
 SUPPLEMENT="clock_gettime"
 
 {

@@ -37,6 +37,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/*
+ * C++ allocation, over the C allocator the platform provides.
+ *
+ * These are not libc++'s to supply on most systems either - they belong to the C++ runtime
+ * alongside the unwinder - and this platform's runtime is a different implementation whose
+ * symbols cannot be resolved against code compiled for libc++ (D006). They are four lines each
+ * and there is nothing clever to get wrong.
+ *
+ * The throwing forms do not throw, because Mesa is compiled with exceptions off. An allocation
+ * failure returns null, which is what the `nothrow` forms promise and what Mesa's own allocation
+ * wrappers already check for. A caller that assumed the throwing contract would get a null
+ * dereference instead of an exception, and that is a worse diagnostic than it sounds, so it is
+ * stated here rather than left to be discovered.
+ */
+void *operator new(__SIZE_TYPE__ size) { return malloc(size ? size : 1); }
+void *operator new[](__SIZE_TYPE__ size) { return malloc(size ? size : 1); }
+void operator delete(void *p) noexcept { free(p); }
+void operator delete[](void *p) noexcept { free(p); }
+void operator delete(void *p, __SIZE_TYPE__) noexcept { free(p); }
+void operator delete[](void *p, __SIZE_TYPE__) noexcept { free(p); }
+
 _LIBCPP_BEGIN_NAMESPACE_STD
 
 /*
@@ -49,7 +70,16 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 void mutex::lock() {
     int rc = pthread_mutex_lock(&__m_);
     if (rc) {
-        __throw_system_error(rc, "mutex lock failed");
+        /*
+         * libc++'s own version throws a `system_error` here. Mesa is compiled with exceptions
+         * off, so throwing is not available and calling libc++'s thrower would only pull in the
+         * machinery this platform cannot resolve (D006).
+         *
+         * A failed mutex lock is not recoverable in any case: the caller is about to touch data
+         * it does not hold. Aborting with the reason is the honest end, and it leaves a line in
+         * the system log rather than a corruption to find later.
+         */
+        __libcpp_verbose_abort("oops-mesa: mutex lock failed with errno %d\n", rc);
     }
 }
 
@@ -119,13 +149,15 @@ void __libcpp_verbose_abort(const char* format, ...) noexcept {
 _LIBCPP_END_NAMESPACE_STD
 
 /*
- * Two exception types whose constructors live in libc++'s own sources. They are referenced by
- * Mesa's C++ even in a build that never throws, because the types appear in headers it includes.
+ * The exception constructors are deliberately not here.
+ *
+ * They were, and they were wrong. `std::logic_error` holds a `__libcpp_refstring`, libc++'s own
+ * reference-counted string, and a constructor written here cannot build that member without
+ * reimplementing its reference counting. The first version compiled and then failed at link
+ * with an undefined `__libcpp_refstring::__libcpp_refstring(char const*)`, which is the right
+ * answer to the wrong approach.
+ *
+ * They come from upstream's `src/stdexcept.cpp` instead, which is one of the libc++ sources that
+ * does compile with this compiler. The build adds it to the same archive as this file. See D006
+ * for why most of libc++ does not.
  */
-namespace std {
-
-logic_error::logic_error(const char* msg) : __imp_(msg) {}
-
-bad_array_new_length::bad_array_new_length() noexcept {}
-
-}  // namespace std

@@ -21,6 +21,8 @@ against. The status column stays the review queue.
 | 🟢 | D004 | [The sysroot is the FreeBSD checkout orbistoun already reads, and the shim owns every crossing point](decisions/D004-the-sysroot-is-the-freebsd-checkout-orbistoun-already-reads.md) | decided | 2026-09-14 |
 | 🟢 | D005 | [The winsys shims the kernel interface, and libdrm is carried rather than replaced](decisions/D005-the-winsys-shims-the-kernel-interface-not-libdrms-api.md) | decided | 2026-09-14 |
 | 🟢 | D006 | [The C++ standard library is ours, and only the parts Mesa reaches](decisions/D006-the-cpp-standard-library-is-ours-and-only-the-parts-mesa-reaches.md) | decided | 2026-09-14 |
+| 🟢 | D007 | [A syncobj is a local handle onto a polled 64-bit fence, and it starts binary](decisions/D007-a-syncobj-is-a-local-handle-onto-a-polled-64-bit-fence.md) | decided | 2026-09-17 |
+| 🟢 | D008 | [The part reports FUSION, because this winsys already says so everywhere else](decisions/D008-the-part-reports-fusion-because-this-winsys-already-says-so-everywhere-else.md) | decided | 2026-09-17 |
 
 | | meaning |
 |---|---|

@@ -71,6 +71,17 @@ static struct oops_winsys_bo *bo_of(uint32_t handle)
     return bo->live ? bo : NULL;
 }
 
+uint64_t oops_winsys_bo_bytes_live(void)
+{
+    uint64_t total = 0;
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_BO; i++) {
+        if (s_bo[i].live) {
+            total += s_bo[i].size;
+        }
+    }
+    return total;
+}
+
 static uint64_t round_up_page(uint64_t n)
 {
     return (n + OOPS_WINSYS_PAGE - 1u) & ~(uint64_t)(OOPS_WINSYS_PAGE - 1u);
@@ -193,6 +204,42 @@ void *oops_winsys_mmap(int fd, size_t length, uint64_t offset)
     return bo->cpu_ptr;
 }
 
+/*
+ * The CPU address of a buffer this shim created, by handle rather than by the encoded offset
+ * `oops_winsys_mmap` takes. Submission needs it: an `AMDGPU_CHUNK_ID_FENCE` chunk names a buffer
+ * and a byte offset inside it, and the sequence number has to land there for radeonsi's fence
+ * wait to see it (worklog 028).
+ *
+ * The range is checked rather than trusted. A chunk naming an offset past the end of the buffer
+ * it also names is a caller error, and writing there would corrupt whatever follows instead of
+ * saying so.
+ */
+void *oops_winsys_bo_cpu_range(uint32_t handle, uint64_t offset, uint64_t bytes)
+{
+    struct oops_winsys_bo *bo = bo_of(handle);
+
+    if (!bo) {
+        oops_winsys_log("buffer %u is not live, so it has no address to write to", handle);
+        return NULL;
+    }
+    if (offset > bo->size || bytes > bo->size - offset) {
+        oops_winsys_log("buffer %u is %llu bytes; %llu at offset %llu does not fit",
+                        handle, (unsigned long long)bo->size, (unsigned long long)bytes,
+                        (unsigned long long)offset);
+        return NULL;
+    }
+    if (!bo->cpu_ptr) {
+        void *v = NULL;
+        if (oops_mem_map_direct(&v, (size_t)bo->size, OOPS_PROT_CPU_RW, 0,
+                                bo->phys, OOPS_WINSYS_PAGE) != 0) {
+            oops_winsys_log("cpu mapping of buffer %u refused", handle);
+            return NULL;
+        }
+        bo->cpu_ptr = v;
+    }
+    return (char *)bo->cpu_ptr + offset;
+}
+
 int oops_winsys_munmap(void *addr, size_t length)
 {
     /* The mapping belongs to the buffer and is released when the buffer is closed, so an
@@ -249,7 +296,24 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg)
         return 0;
     case AMDGPU_VA_OP_CLEAR:
     case AMDGPU_VA_OP_REPLACE:
-        oops_winsys_log("GEM_VA operation %u is not implemented", arg->operation);
+        /*
+         * Sparse buffers, and only sparse buffers. Every call site for these two in Mesa is in
+         * `amdgpu_bo_sparse_create`, `_commit` or `_destroy`, so nothing on the path to a first
+         * frame reaches them (worklog 029).
+         *
+         * They are not merely unwritten. `REPLACE` remaps part of a live range and the sparse
+         * path also maps with `AMDGPU_VM_PAGE_PRT`, which asks for pages that fault benignly -
+         * a page-table property, and oops-sdk's memory surface has nothing that expresses it
+         * (`oops_mem_batch_map` maps a contiguous physical range and that is all). So this is a
+         * gap in what the platform is known to offer, not a gap in this file.
+         *
+         * Mesa advertises sparse anyway: `has_sparse` is hardcoded from the chip family and
+         * reaches `caps->sparse_buffer_page_size`. An application that believes it gets this
+         * refusal, under its own name, rather than a wrong result.
+         */
+        oops_winsys_log("GEM_VA operation %u is sparse-only and is not implemented; sparse needs "
+                        "PRT mappings, which this platform is not known to offer",
+                        arg->operation);
         return -ENOSYS;
     default:
         return -EINVAL;

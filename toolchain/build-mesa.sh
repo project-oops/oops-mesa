@@ -165,6 +165,31 @@ for p in "$ROOT"/patches/*.patch; do
 done
 shopt -u nullglob
 
+# A changed cross file needs the build directory gone, not just reconfigured.
+#
+# meson reads `[built-in options]` - which is where `c_args` lives - when it first configures a
+# build directory, and keeps them in its own coredata afterwards. A later edit to the cross file
+# is then *silently ignored*: ninja regenerates, every target rebuilds, the build succeeds, and
+# the compile lines still carry the old flags. That is what happened when `-DNO_REGEX` was added
+# on 2026-09-17 - 1,171 targets recompiled and `build.ninja` contained no mention of it, while
+# `-DOOPS_MESA_WINSYS` from the same line was present because it had been there at first setup.
+#
+# A build that ignores its own configuration and reports success is worse than one that fails, so
+# this starts over whenever the cross file's *contents* differ from what the build directory was
+# configured against.
+#
+# Contents rather than timestamps: `build.ninja` is regenerated on every build, so it is almost
+# always newer than the cross file and a `-nt` test never fires. That was tried first and is why
+# this comment names the trap.
+CROSS_STAMP="$BUILD/.cross-prospero.sha256"
+cross_sha=$(sha256sum "$HERE/cross-prospero.ini" | awk '{print $1}')
+if [ -f "$BUILD/build.ninja" ] && [ "$(cat "$CROSS_STAMP" 2>/dev/null)" != "$cross_sha" ]; then
+    echo "oops-mesa: cross-prospero.ini does not match what this build directory was configured"
+    echo "           against; meson would keep its cached options, so it is being reconfigured"
+    echo "           from scratch."
+    rm -rf "$BUILD"
+fi
+
 echo "oops-mesa: configuring Mesa for x86_64-unknown-freebsd (log: build/mesa-configure.log)"
 set +e
 meson setup "$BUILD" "$MESA" \
@@ -208,6 +233,9 @@ fi
 
 echo "oops-mesa: configured. Building."
 
+# Record what this build directory was configured against, so the check above can tell.
+printf '%s\n' "$cross_sha" > "$CROSS_STAMP"
+
 # Every static archive the configuration produces, asked of ninja rather than listed here.
 #
 # A hand-written list goes stale silently, and did: it omitted libdrm's core archive, Mesa's
@@ -241,4 +269,121 @@ if [ "${#archives[@]}" -eq 0 ]; then
 fi
 ninja -C "$BUILD" "${archives[@]}"
 
+# Make libdrm's private symbols actually private.
+#
+# Mesa's `libgallium.a` and libdrm's `libdrm_amdgpu.a` both define `handle_table_remove` and its
+# family, and a title linking both meets a duplicate symbol. Upstream does not have this problem
+# because libdrm is normally a shared library: its own headers mark these `drm_private`, which is
+# `visibility("hidden")`, and a shared library never exports them. A static archive keeps them
+# global at link time, so the intent is stated and not enforced.
+#
+# `--localize-hidden` enforces it: every symbol already marked hidden becomes local. That is
+# upstream's own declaration applied, not a renaming or an override, and it needs no patch. A
+# symbol libdrm meant to publish is unaffected, because it was never marked hidden.
+# It has to be a partial link first, and that is not a detail.
+#
+# Running `--localize-hidden` over the archive in place was tried and is wrong: it localizes
+# per object, so libdrm's own cross-object references break. `amdgpu_bo.c` calls
+# `handle_table_insert` in `handle_table.c` and `amdgpu_cs_calculate_timeout` in `amdgpu_cs.c`,
+# both hidden, and making them local to their own objects leaves those calls undefined.
+#
+# So the objects are combined into one relocatable object first. References between them resolve
+# inside it, and only then are the hidden symbols localized - which is now safe, because nothing
+# outside is entitled to them. That is what partial linking is for.
+localized=0
+for a in "${archives[@]}"; do
+    case "$a" in
+        *libdrm*) ;;
+        *) continue ;;
+    esac
+    combined="$ROOT/build/$(basename "${a%.a}")-combined.o"
+    ld.lld -r --whole-archive "$BUILD/$a" -o "$combined"
+    llvm-objcopy --localize-hidden "$combined"
+    rm -f "$BUILD/$a"
+    llvm-ar rcs "$BUILD/$a" "$combined"
+    localized=$((localized + 1))
+done
+
+# Prove the collision is gone, by linking rather than by counting.
+#
+# Counting symbols defined in more than one archive was tried and is wrong: that is normal and
+# harmless, because the linker pulls at most one definition out of a group. radeonsi alone
+# defines its tracepoints in eleven per-generation archives. A duplicate is only an error when
+# two objects that are both pulled in define the same name, and the only thing that knows which
+# objects get pulled in is the linker.
+#
+# So this attempts Mesa's own DRI link, which pulls in everything a driver needs, and looks at
+# the errors. Undefined symbols are expected and fine: they are the platform's C library, which
+# a title resolves at load and which `tools/what-is-still-needed.sh` accounts for. A duplicate
+# symbol is not fine, and fails here.
+echo "oops-mesa: checking a full link for duplicate symbols"
+linklog="$ROOT/build/link-check.log"
+ninja -C "$BUILD" "$dri_so" > "$linklog" 2>&1 || true
+if grep -q "duplicate symbol" "$linklog"; then
+    echo "oops-mesa: a title linking these archives would meet a duplicate symbol:" >&2
+    grep -A3 "duplicate symbol" "$linklog" | head -12 >&2
+    exit 1
+fi
+undef=$(grep -c "undefined symbol" "$linklog" || true)
+echo "oops-mesa: no duplicate symbols; $undef undefined, which is the platform's to answer"
+
+# The C++ half of the shim, as an archive.
+#
+# The other shim sources compile with the title, so they bind to whichever oops-sdk that title
+# was built against and a stale one cannot be linked by accident. This file is different: it
+# touches no oops-sdk header, only libc++'s, which belong to this repository. Building it here
+# also keeps it away from the title's `-std=c11`, which would refuse it.
+#
+# It carries two things: this repository's own definitions, and the upstream libc++ sources that
+# do compile with this compiler. `stdexcept.cpp` is one of them, and it provides the exception
+# constructors properly - with libc++'s own reference-counted string behind them - where the
+# first version of this file had hand-written stubs that could not construct that member.
+#
+# Most of libc++ still does not compile here, for the reason D006 gives: its headers are LLVM 21
+# and the compiler is clang 18. Taking the files that do compile is not a change to that
+# decision, it is the same decision applied more carefully. Building each separately and keeping
+# what succeeds means a compiler upgrade later simply yields more of them.
+LIBCXX_SRC="$HERE/libcxx-src"
+CXXSHIM_A="$HERE/sysroot/usr/lib/liboopsmesa_cxx.a"
+if [ -f "$ROOT/src/runtime/cxx_support.cpp" ]; then
+    work="$ROOT/build/cxxshim"
+    rm -rf "$work"; mkdir -p "$work"
+    cxxflags="-target x86_64-unknown-freebsd --sysroot=$HERE/sysroot -stdlib=libc++ -fPIC -O2"
+
+    clang++ $cxxflags -std=c++17 -c "$ROOT/src/runtime/cxx_support.cpp" \
+            -o "$work/cxx_support.o"
+
+    # Upstream's own, for the parts it can still build. `-I src` is not optional: its sources
+    # include their implementation details by a path relative to that directory, and without it
+    # `stdexcept.cpp` compiles to the `what()` accessors and silently omits every constructor.
+    upstream_ok=0
+    for c in "$LIBCXX_SRC"/src/stdexcept.cpp; do
+        [ -f "$c" ] || continue
+        if clang++ $cxxflags -std=c++23 -w -D_LIBCPP_BUILDING_LIBRARY \
+                   -I"$LIBCXX_SRC/src" -I"$LIBCXX_SRC/rt" \
+                   -c "$c" -o "$work/upstream_$(basename "${c%.cpp}").o" 2>/dev/null; then
+            upstream_ok=$((upstream_ok + 1))
+        fi
+    done
+
+    mkdir -p "$HERE/sysroot/usr/lib"
+    rm -f "$CXXSHIM_A"
+    llvm-ar rcs "$CXXSHIM_A" "$work"/*.o
+    echo "oops-mesa: C++ support archive built (ours plus $upstream_ok upstream source)"
+fi
+
+# The archives in the order Mesa links them, for a title to consume.
+#
+# These are static archives, so the linker resolves left to right and the order is load-bearing:
+# a wrong one is an undefined symbol rather than a warning. Taking it from Mesa's own link line
+# means `oops-mesa.mk` never has to arrange it by hand and cannot drift from what upstream does.
+# Written relative to this repository's root, not absolute. The build runs in a container where
+# the repository is mounted at /w, and a consumer does not, so an absolute path here is a path
+# that exists nowhere the title is built. `oops-mesa.mk` prefixes its own directory.
+ninja -C "$BUILD" -t commands "$dri_so" 2>/dev/null | tail -1 \
+    | tr ' ' '\n' | sed -n 's/^\(.*\.a\)$/build\/mesa\/\1/p' \
+    > "$ROOT/build/link-order.txt"
+
 echo "oops-mesa: built ${#archives[@]} archives for x86_64-unknown-freebsd"
+echo "oops-mesa: $localized libdrm archives had their private symbols localized; no duplicates remain"
+echo "oops-mesa: link order for a title written to build/link-order.txt ($(wc -l < "$ROOT/build/link-order.txt" | tr -d ' ') archives)"

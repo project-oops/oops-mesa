@@ -124,6 +124,9 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
 {
     const uint64_t *chunk_ptrs;
     uint32_t submitted = 0;
+    uint32_t user_fence_handle = 0;
+    uint64_t user_fence_offset = 0;
+    int have_user_fence = 0;
 
     if (!ensure_queue()) {
         return -ENODEV;
@@ -158,12 +161,43 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
             submitted++;
             break;
         }
+        case AMDGPU_CHUNK_ID_FENCE: {
+            /*
+             * Where radeonsi will look to decide whether this submission retired. It is not
+             * optional and it is not the syncobj path: `amdgpu_fence_wait` reads this memory
+             * *first* and returns success without touching a syncobj if the value has landed -
+             *
+             *     user_fence_cpu = afence->user_fence_cpu_address;
+             *     if (user_fence_cpu) {
+             *        if (*user_fence_cpu >= afence->seq_no) {
+             *           afence->signalled = true;
+             *           return true;
+             *        }
+             *
+             * - and `amdgpu_cs_has_user_fence` is true for GFX, which is the only engine this
+             * shim answers for. So on this part every fence carries one of these, and leaving it
+             * unwritten is what would send radeonsi down to `SYNCOBJ_WAIT` (worklog 028).
+             *
+             * The chunk is remembered rather than written now, because the value to write is the
+             * sequence number this call is about to hand back, and that is only true once the
+             * work has actually retired.
+             */
+            const struct drm_amdgpu_cs_chunk_fence *fc =
+                (const struct drm_amdgpu_cs_chunk_fence *)(uintptr_t)chunk->chunk_data;
+            if (fc) {
+                user_fence_handle = fc->handle;
+                user_fence_offset = fc->offset;
+                have_user_fence = 1;
+            }
+            break;
+        }
         case AMDGPU_CHUNK_ID_DEPENDENCIES:
-        case AMDGPU_CHUNK_ID_FENCE:
         case AMDGPU_CHUNK_ID_SYNCOBJ_IN:
         case AMDGPU_CHUNK_ID_SYNCOBJ_OUT:
-            /* Nothing to do while submission is synchronous. Named rather than ignored so that
-             * making it asynchronous starts by deleting this case. */
+            /* Nothing to do while submission is synchronous: a dependency named here has already
+             * retired, because the submit that produced it did not return until it had. Named
+             * rather than ignored so that making submission asynchronous starts by deleting this
+             * case. */
             break;
         default:
             oops_winsys_log("command stream chunk kind %u is not handled", chunk->chunk_id);
@@ -214,8 +248,40 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
         }
     }
 
+    /*
+     * The work has retired, so the sequence number this call is about to return is true now and
+     * can be published where radeonsi will look for it.
+     *
+     * Writing it *after* the wait rather than before is the whole correctness argument. radeonsi
+     * treats `*user_fence >= seq_no` as "this submission is done"; publishing the number before
+     * the fence fired would make that true while the GPU was still working, which is the silent
+     * lie this collection refuses (CLAUDE.md, principle 4; orbistoun worklog 539).
+     *
+     * A refused write is not fatal. The submission did retire, and `WAIT_CS` answers from the
+     * same sequence number, so the work is correctly reported either way - what is lost is the
+     * fast path, and radeonsi falls through to `SYNCOBJ_WAIT`, which refuses and names itself.
+     * That is a worse outcome than a working fast path and a better one than a fence that reads
+     * as signalled without being written.
+     */
+    uint64_t sequence = s_sequence + 1u;
+
+    if (have_user_fence) {
+        uint64_t *slot = (uint64_t *)oops_winsys_bo_cpu_range(user_fence_handle,
+                                                              user_fence_offset,
+                                                              sizeof(uint64_t));
+        if (slot) {
+            *slot = sequence;
+        } else {
+            oops_winsys_log("submission %llu retired but its fence slot (buffer %u + %llu) could "
+                            "not be written; radeonsi will fall back to SYNCOBJ_WAIT",
+                            (unsigned long long)sequence, user_fence_handle,
+                            (unsigned long long)user_fence_offset);
+        }
+    }
+
     memset(&arg->out, 0, sizeof(arg->out));
-    arg->out.handle = ++s_sequence;
+    s_sequence = sequence;
+    arg->out.handle = sequence;
     return 0;
 }
 

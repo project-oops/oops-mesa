@@ -10,6 +10,155 @@ Entries are grouped **Added / Changed / Fixed**, newest first.
 
 ### Added
 
+- 2026-09-17: **`tools/tiling-compare`, and with it the fact that a radeonsi colour target is
+  already in the layout the display scans out.** Worklog 017 matched addrlib against oops-sdk's
+  tiler "across all 16,384 pixels of the block" - one 64 KiB block - and the conclusion was
+  quietly carried to whole surfaces. It now holds for six: 98,304 pixels over a 3x2 block grid,
+  nothing disagreeing, with a control at eight pipes instead of sixteen that disagrees on 92,160
+  of them, so the comparison is known to be able to detect a difference. The grid is 3x2 rather
+  than square because a 2x2 one cannot tell row-major from column-major. Neither side is restated:
+  the tiler's offsets are recovered by running `agc_tile_surface`, and the Mesa side is the pinned
+  AddressLib compiled with its own flags. `make check` gained `check-tiling`, which compares a
+  fresh run against the tracked output like `check-preamble` does, so a pin bump or a tiler edit
+  that changes the answer shows up as a diff rather than as a picture that is almost right.
+  Worklog 031.
+- 2026-09-17: **`DRM_IOCTL_GET_CLIENT` is answered, and it comes before everything else.**
+  `amdgpu_device_initialize` opens with `amdgpu_get_auth`, returns its error without touching
+  anything else, and reaches this ioctl because `drmGetNodeTypeFromFd` cannot answer
+  `DRM_NODE_RENDER` on a platform with no DRM major and no `/dev/dri` - no descriptor this shim
+  could hand back would take the render-node shortcut. Until now it fell to the default branch and
+  refused, so device initialisation stopped on its first statement, ahead of the version, ahead of
+  `ACCEL_WORKING`, ahead of the `GB_ADDR_CONFIG` read libdrm itself makes, and ahead of every line
+  of `ac_query_gpu_info`. The reply reports unauthenticated, which is not a guess: it is what
+  libdrm's own render-node branch assigns without asking. `DRM_IOCTL_GET_CAP` is answered in the
+  same change - zero for `SYNCOBJ_TIMELINE`, which is the single lever behind D007, and zero for
+  `ADDFB2_MODIFIERS`; every other capability refuses by name. Worklog 021 carries the full startup
+  path with each call's failure disposition. Eight host checks.
+- 2026-09-17: **`DRM_IOCTL_SYNCOBJ_CREATE` and `SYNCOBJ_DESTROY` are answered** (`src/winsys/syncobj.c`).
+  `amdgpu_winsys_create` creates a timeline syncobj *before* it asks the device anything and treats
+  a failure as fatal, so these gate every other answer the winsys gives - `GB_ADDR_CONFIG`, the DRM
+  version, `HW_IP_INFO` and `FW_VERSION` all live inside `ac_query_gpu_info`, which runs later.
+  A syncobj here is a handle in this repository's own table, because the fence it wraps is memory
+  this shim allocated (D007). `WAIT`, `SIGNAL` and `RESET` refuse and name themselves: nothing
+  submits work yet, and obSCEne measured that the platform exports no way to block on a fence in
+  any case - the whole event-queue family is absent on 12.40, with controls resolving in the same
+  check (`REQ-20260916T2208Z-7e29`). Eleven host checks. Worklog 020, D007.
+
+### Fixed
+
+- 2026-09-17: **`AMDGPU_CHUNK_ID_FENCE` is honoured, and without it every fence wait would have
+  failed.** `amdgpu_fence_wait` reads the user fence *first* and returns success without touching
+  a syncobj when `*user_fence_cpu >= afence->seq_no`; `amdgpu_cs_has_user_fence` is true for GFX,
+  the only engine this winsys answers for, so every submit carries the chunk. Both values are this
+  shim's - the sequence number is what `oops_winsys_cs` already returns in `arg->out.handle`, and
+  the slot is a buffer radeonsi mapped at context creation - but the chunk was being skipped under
+  a comment saying synchronous submission had nothing to do. True for the two syncobj chunks, not
+  for this one: the memory is read later by a caller that does not know the submit was
+  synchronous, and an unwritten slot reads zero against a sequence starting at one. The number is
+  now written *after* the fence fires, never before, because publishing it early would report a
+  submission complete while the GPU was still working. Adds `oops_winsys_bo_cpu_range`, which
+  bounds-checks the caller's offset rather than trusting it. Eight host checks. Worklog 028.
+- 2026-09-17: the syncobj table's size **was justified by a false premise**, and both the size and
+  the refusal message are corrected. It said radeonsi creates "one syncobj per winsys and a handful
+  per context" and that 256 slots therefore caught a leak. radeonsi creates a syncobj *per fence* -
+  `amdgpu_fence_create` calls `ac_drm_cs_create_syncobj2` on every one - with one fence per flush,
+  and fences are reference counted, so every fence an application holds keeps a syncobj alive and
+  `glFenceSync` bounds none of that. Reaching the limit is ordinary use, not a bug, so the message
+  no longer accuses the caller of leaking; it says a limit was reached, that the flush asking for
+  it fails, and which constant to raise. The table stays fixed and still refuses rather than
+  growing - a shim should not allocate without bound on a submission path - but is now 1024 slots,
+  stated as a policy past ordinary use rather than a measurement. Worklog 027.
+
+### Changed
+
+- 2026-09-17: **`ids_flags` is decided rather than zeroed**, and the part now reports
+  `AMDGPU_IDS_FLAGS_FUSION` (D008). Mesa reads the field in four places and a zeroed one is four
+  claims, not an absent one. Three stay clear with reasons - no trusted memory, no preemption
+  (which on this part is the only gate on register shadowing, and submission here has no
+  preemption notion), and no conformant truncation (unmeasured, and clear is the side that keeps
+  Mesa's texture-gather workarounds on). `FUSION` changes because clear told Mesa the part has
+  dedicated VRAM while `oops_winsys_memory_info`, in the same file, already answers vram,
+  cpu_accessible_vram and gtt as one CPU-visible pool; they are one claim and now agree. Every one
+  of the ~24 `has_dedicated_vram` consumers was read first: surface layout is untouched on this
+  part, so worklog 017's derivation still holds, and everything that genuinely changes is on the
+  context path rather than screen creation. Six host checks. Worklog 025.
+- 2026-09-17: the chip-identification check **runs Mesa's `ASICREV_IS` rather than a copy of its
+  constants**. `amdgpu_asic_addr.h` includes nothing, so the host suite can use it directly; the
+  old test defined `GFX1013_RANGE_LOW`/`HIGH` beside a comment saying it would notice if Mesa
+  moved, which copied constants cannot do. The values were correct, so no verdict changes - but a
+  pin bump that moves the range now fails here instead of misidentifying the chip at run time.
+  `mesa/src` joins the host suite's include path. Worklog 024.
+- 2026-09-17: **`mesa-probe` injects its own executable name**, which removes a null dereference
+  three lines past the one worklog 019 fixed. With `getenv` answering null honestly,
+  `driParseConfigFiles` falls through to `util_get_process_name()`, which on this target is
+  `getprogname()` passed straight through - and a null from there reaches
+  `strcmp(exec, data->execName)` in `parseAppAttr`, unguarded, against every entry in Mesa's
+  built-in driconf database that names an executable. Whether `getprogname` returns a string or a
+  null in a title started by the system loader is not measured anywhere; `driInjectExecName` -
+  upstream's own seam, used by its own tests - makes the question moot, and the title genuinely
+  knows its name. A second instance of the same defect exists in radeonsi's context path and is
+  deliberately left alone: it is unreachable only because the option cache is incomplete, so
+  widening `mesa_probe_options` would expose it. Worklog 023.
+- 2026-09-17: **`getenv` is defined locally**, and it was the import killing the title on hardware.
+  `libSceLibcInternal` does not export it on firmware 12.40 - eleven candidates swept,
+  `libc-controls` and `kernel-controls` 3 of 3 in the same check, and `getenv` alone absent
+  (`REQ-20260917T0025Z-1f6d`, sweep `20260917-013336`). `driParseConfigFiles` reaches it through
+  `os_get_option` as its first platform call, which is why the title died before the winsys was
+  touched. Unlike the other stubs this one returns null *correctly* rather than as a failure - no
+  environment means no name is set - so it says so once and is quiet after. Worklog 019.
+- 2026-09-17: a Mesa-linked title's **import manifest is complete** - 504 names placed, none
+  unknown, none naming a library that cannot resolve it. Three imports removed by setting
+  `NO_REGEX` in the cross file (their only call site is an expat handler and expat is not linked);
+  six defined in the new `src/runtime/libc_absent.c` after obSCEne established on the payload leg
+  that the platform exports none of them (`REQ-20260916T2200Z-4d7e`, sweep `20260916-235024`, with
+  27-of-27 and 11-and-11 positive controls validating the leg). The six are loud stubs, not quiet
+  ones: none is on a reachable path, so if one is called the useful fact is that it was called.
+  Worklog 018.
+- 2026-09-17: `toolchain/build-mesa.sh` reconfigures from scratch when `cross-prospero.ini` changes.
+  meson reads `[built-in options]` only at first configure, so a later edit was silently discarded -
+  1,171 targets rebuilt with the old flags and reported success. It now compares a hash of the cross
+  file, not a timestamp, because `build.ninja` is regenerated every build. Worklog 018.
+- 2026-09-16: `GB_ADDR_CONFIG` (0x263e) is **answered**, from `OOPS_GB_ADDR_CONFIG` = `0x00000004`.
+  The register is still unreadable; the value is *derived* by inverting Mesa's addrlib against
+  oops-sdk's hardware-validated tiler (`agc_tiler.c`), keeping the candidates whose swizzle
+  reproduces the tiler across all 16,384 pixels of the block. 32 of 224 candidates match and all
+  agree on `NUM_PIPES` = 16 pipes and 256 B interleave; `MAX_COMPRESSED_FRAGS` and `NUM_PKRS` are
+  left zero because nothing on this path reads them. The matching mode is `64KB_R_X`. Under an
+  RB+ (GFX10.3) identity *nothing* matches, which settles the open GFX10.3-or-GFX1013 question
+  against GFX10.3 and makes the value dependent on the chip identity in `device_info.c`. It is
+  not the register's value on the console and is logged as derived, not measured. Three host
+  checks, on the fields the derivation pins rather than on the literal. Worklog 017.
+- 2026-09-16: the DRM interface version is **3.54**, was 3.49. Mesa's `ac_query_gpu_info` refuses
+  below 3.54 before it asks anything else, so the startup path had been stopping on the version
+  call and would have gone on stopping there with the register answered. 3.54 claims nothing:
+  every capability Mesa gates on the minor sits at 55 or above, and the workaround branches keyed
+  below 63 stay active. Worklog 017.
+- 2026-09-16: `AMDGPU_INFO_HW_IP_INFO` answers for GFX - one ring, GFX10 - and refuses every other
+  engine. Mesa fails the device unless GFX or COMPUTE reports a ring, and it discards a COMPUTE
+  answer on this part by name, so GFX is the only route. The ring is the one obSCEne's
+  `166-agc/driver-submit-fence` and D003's route measurement have both seen retire. Worklog 017.
+- 2026-09-16: `AMDGPU_INFO_FW_VERSION` answers zero rather than refusing, because a refusal is
+  fatal to the device and zero is the conservative side of every gate Mesa keys off these
+  versions on this part. Logged as unmeasured. Worklog 017.
+- 2026-09-16: `AMDGPU_INFO` is exported as `oops_winsys_info`, so the host suite can reach the
+  query radeonsi asks everything through without a bound graphics driver. Worklog 017.
+- 2026-09-15: `AMDGPU_INFO_READ_MMR_REG` for `GB_ADDR_CONFIG` (0x263e) now refuses with `-EACCES`
+  and the measured reason: obSCEne confirmed the register is privileged and a userspace COPY_DATA
+  read *faults* the GPU (`REQ-...-6f14`, sweep 20260915-150825, `GPU_FAULT_BAD_COMMAND_ASYNC`).
+  A one-line seam `OOPS_GB_ADDR_CONFIG` waits for a cited value; the suggested `0x00000244` is not
+  adopted (uncited, no such Mesa constant, and the part is GFX1013 not GFX10.3). Worklog 016.
+
+### Added
+
+- 2026-09-15: `AMDGPU_INFO_MEMORY`, answered from the kernel's own direct-memory size at the moment
+  of asking rather than from a constant (12 GiB on firmware 12.40, obSCEne `020-memory/direct-size`).
+  All three heaps are the one pool. Which pool the figure bounds is assumed and logged as such
+  (`REQ-20260915T0030Z-5d1c`). Ten host checks (worklog 016).
+- 2026-09-15: **a title links and packages upstream Mesa.** `oops-apps/src/mesa-probe` produces a
+  19.6 MB module for the console and a SELFish title archive. Adds `oops-mesa.mk`, the `USE_MESA`
+  switch in oops-apps, `tools/generate-imports.sh`, and the duplicate-symbol fix: libdrm's
+  archives are partially linked and their hidden symbols localized, which is upstream's own
+  declaration enforced rather than a rename (worklog 015).
 - 2026-09-14: `src/runtime/threads.c`, the thread surface Mesa needs mapped onto the vendor's.
   All 26 functions, with the trailing-name arity written out per call and vendor failures
   translated through the measured `0x8002_0000 | errno` scheme so a condition-variable timeout

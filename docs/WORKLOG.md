@@ -26,3 +26,20 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [012. Asking the build what it still needs, instead of guessing](worklog/012-asking-the-build-what-it-still-needs.md) |
 | - | [013. The C++ runtime question, closed](worklog/013-the-cpp-runtime-question-closed.md) |
 | - | [014. Everything in this repository's hands is done](worklog/014-everything-in-this-repositorys-hands-is-done.md) |
+| - | [015. A title links all of Mesa](worklog/015-a-title-links-all-of-mesa.md) |
+| - | [016. Memory from the kernel, and a sweep that did not say what its log says](worklog/016-memory-from-the-kernel-and-a-sweep-that-did-not-say-what-its-log-says.md) |
+| - | [017. The register answered, and the gate nobody had read](worklog/017-the-register-answered-and-the-gate-nobody-had-read.md) |
+| - | [018. The imports close, and three builds that reported success falsely](worklog/018-the-imports-close-and-three-builds-that-reported-success-falsely.md) |
+| - | [019. The symbol was `getenv`](worklog/019-the-symbol-was-getenv.md) |
+| - | [020. The next wall is syncobj, and it comes before everything](worklog/020-the-next-wall-is-syncobj-and-it-comes-first.md) |
+| - | [021. The wall was earlier again, and this time the whole path is written down](worklog/021-the-wall-was-earlier-again-and-this-time-the-whole-path-is-written-down.md) |
+| - | [022. A screen can be created without touching the GPU](worklog/022-a-screen-can-be-created-without-touching-the-gpu.md) |
+| - | [023. The second null in the function that already killed this title](worklog/023-the-second-null-in-the-function-that-already-killed-this-title.md) |
+| - | [024. The rest of the sweep is clean, and the chip check now runs Mesa's own macro](worklog/024-the-rest-of-the-sweep-is-clean-and-the-chip-check-now-runs-mesas-own-macro.md) |
+| - | [025. The field that was zero by memset rather than by choice](worklog/025-the-field-that-was-zero-by-memset-rather-than-by-choice.md) |
+| - | [026. Twenty-one more fields that were zero without saying so](worklog/026-twenty-one-more-fields-that-were-zero-without-saying-so.md) |
+| - | [027. The refused commands, audited - and a premise that was wrong](worklog/027-the-refused-commands-audited-and-a-premise-that-was-wrong.md) |
+| - | [028. The fence radeonsi actually reads is not the syncobj](worklog/028-the-fence-radeonsi-actually-reads-is-not-the-syncobj.md) |
+| - | [029. Context creation is covered, and sparse is the one that is not](worklog/029-context-creation-is-covered-and-sparse-is-the-one-that-is-not.md) |
+| - | [030. Presentation, and an extrapolation worth catching](worklog/030-presentation-and-an-extrapolation-worth-catching.md) |
+| - | [031. The extrapolation checked out, and now it is checked](worklog/031-the-extrapolation-checked-out-and-now-it-is-checked.md) |

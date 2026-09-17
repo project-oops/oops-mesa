@@ -39,6 +39,22 @@ union drm_amdgpu_bo_list;
 union drm_amdgpu_gem_wait_idle;
 struct drm_amdgpu_gem_op;
 int oops_winsys_version(struct drm_version *arg);
+
+/* The two core DRM questions libdrm asks before it asks anything about a GPU. GET_CLIENT is the
+ * first statement of `amdgpu_device_initialize` and gates every other answer in this file;
+ * GET_CAP decides one feature flag apiece. Both are exported so the host suite can check the
+ * answers, which are decided here rather than measured. */
+struct drm_client;
+struct drm_get_cap;
+int oops_winsys_get_client(struct drm_client *arg);
+int oops_winsys_get_cap(struct drm_get_cap *arg);
+
+/* AMDGPU_INFO, the query radeonsi asks everything through. Exported rather than reached only via
+ * the dispatcher because opening the device needs the platform graphics driver bound, which the
+ * build machine cannot do - and the answers here are decided in this repository, so they are
+ * exactly what a host suite should be able to check. */
+struct drm_amdgpu_info;
+int oops_winsys_info(struct drm_amdgpu_info *arg);
 int oops_winsys_gem_create(union drm_amdgpu_gem_create *arg);
 int oops_winsys_gem_mmap(union drm_amdgpu_gem_mmap *arg);
 int oops_winsys_gem_close(uint32_t handle);
@@ -56,6 +72,38 @@ int oops_winsys_wait_cs(union drm_amdgpu_wait_cs *arg);
  * groups are still assumed rather than measured, and logs that number. */
 struct drm_amdgpu_info_device;
 unsigned oops_winsys_device_info(struct drm_amdgpu_info_device *out);
+
+/* The heap sizes radeonsi reads through AMDGPU_INFO_MEMORY, from the kernel's direct-memory size
+ * at the time of asking. Returns 0, or a negative errno when the kernel cannot be asked. */
+struct drm_amdgpu_memory_info;
+int oops_winsys_memory_info(struct drm_amdgpu_memory_info *out);
+
+/* Bytes held by the buffers this shim has created and not yet closed. */
+uint64_t oops_winsys_bo_bytes_live(void);
+
+/* The CPU address of a range inside a live buffer, mapping it if it is not mapped yet. Returns
+ * NULL for a dead handle or a range that does not fit. Submission uses it to land a sequence
+ * number where an `AMDGPU_CHUNK_ID_FENCE` chunk asked for it. */
+void *oops_winsys_bo_cpu_range(uint32_t handle, uint64_t offset, uint64_t bytes);
+
+/* Synchronisation objects. A syncobj here is a handle in this repository's own table rather than
+ * a kernel object, because the fence it wraps is memory this shim allocated (D007). Creating one
+ * is what `amdgpu_winsys_create` needs before it asks the device anything, so these gate every
+ * other answer the winsys gives. Waiting and signalling are not implemented: nothing submits work
+ * yet, and the platform offers no way to block on a fence in any case. */
+struct drm_syncobj_create;
+struct drm_syncobj_destroy;
+int oops_winsys_syncobj_create(struct drm_syncobj_create *arg);
+int oops_winsys_syncobj_destroy(struct drm_syncobj_destroy *arg);
+bool oops_winsys_syncobj_is_live(uint32_t handle);
+
+/* GB_ADDR_CONFIG (dword 0x263e) as this shim answers it through AMDGPU_INFO_READ_MMR_REG.
+ * Derived by inverting addrlib against oops-sdk's tiler, not read from the register, which
+ * faults a userspace read; the derivation and what it does and does not pin are written out
+ * beside the definition in drm_device.c. Returns 0 when no value is defined, which is not a
+ * legal answer and makes the register read refuse. Exported so the host suite can check the
+ * fields addrlib reads rather than a literal. */
+uint32_t oops_winsys_gb_addr_config(void);
 
 /* Copy a filled structure back to the caller, honouring the size and pointer an AMDGPU_INFO
  * request carries. */

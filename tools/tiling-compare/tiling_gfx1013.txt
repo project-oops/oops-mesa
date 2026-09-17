@@ -1,0 +1,12 @@
+tiling-compare: 384x256, 32bpp, ADDR_SW_64KB_R_X, pipeBankXor 0
+  family 0x8F  revision 0x82
+  tiled surface is 393216 bytes, 3x2 blocks of 64 KiB
+  98304 pixels compared per configuration
+
+  derived  GB_ADDR_CONFIG 0x00000004 (16 pipes): 0 disagree
+  control  GB_ADDR_CONFIG 0x00000003 (8 pipes):  92160 disagree
+      first at (8, 0): tiler 0x100, addrlib 0x900
+
+  VERDICT: the layouts agree, on a surface of 3x2 blocks, with a control
+           that disagrees. A radeonsi 64KB_R_X colour target is already in
+           the layout the display scans out.

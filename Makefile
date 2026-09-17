@@ -6,9 +6,9 @@
 
 include dependencies.mk
 
-.PHONY: check check-pin check-patches check-docs check-preamble preamble test clean
+.PHONY: check check-pin check-patches check-docs check-preamble check-tiling preamble tiling test clean
 
-check: check-pin check-patches check-docs check-preamble
+check: check-pin check-patches check-docs check-preamble check-tiling
 	@echo "oops-mesa: check passed (pin $(MESA_TAG), $(words $(wildcard patches/*.patch)) patches)"
 
 # The submodule is present and at exactly the commit the pin names. A tree whose Mesa is on
@@ -52,6 +52,20 @@ check-preamble:
 preamble:
 	bash tools/preamble-dump/build.sh
 
+# tools/tiling-compare: whether a radeonsi 64KB_R_X surface lands in the same bytes as the layout
+# oops-sdk's tiler produces, which is what the display scans out. Its tracked output carries the
+# verdict *and* a control, so an agreement that stops meaning anything is visible. Needs clang++
+# and a sibling oops-sdk; skipped, not failed, without them.
+check-tiling:
+	@if command -v clang++ >/dev/null && test -d $(OOPS_SDK)/src/agc; then \
+	   OOPS_SDK=$(OOPS_SDK) bash tools/tiling-compare/build.sh --check; \
+	 else \
+	   echo "oops-mesa: check-tiling skipped (needs clang++ and an oops-sdk at $(OOPS_SDK))"; \
+	 fi
+
+tiling:
+	OOPS_SDK=$(OOPS_SDK) bash tools/tiling-compare/build.sh
+
 clean:
 	rm -rf build dist
 
@@ -67,8 +81,8 @@ test:
 	@test -d $(OOPS_SDK)/include || { echo "oops-mesa: no oops-sdk at $(OOPS_SDK); set OOPS_SDK" >&2; exit 1; }
 	@mkdir -p build/host
 	@cc -std=c11 -Wall -Wextra -Werror -DOOPS_HOST_BUILD \
-	    -Imesa/include -Isrc/winsys -I$(OOPS_SDK)/include \
-	    tests/winsys_test.c tests/platform_double.c src/winsys/drm_device.c src/winsys/device_info.c src/winsys/buffers.c src/winsys/submit.c src/winsys/context.c src/winsys/log.c \
+	    -Imesa/include -Imesa/src -Isrc/winsys -I$(OOPS_SDK)/include \
+	    tests/winsys_test.c tests/platform_double.c src/winsys/drm_device.c src/winsys/device_info.c src/winsys/buffers.c src/winsys/submit.c src/winsys/context.c src/winsys/log.c src/winsys/syncobj.c \
 	    $(OOPS_SDK)/src/memory/memory.c \
 	    -o build/host/winsys_test
 	@./build/host/winsys_test
