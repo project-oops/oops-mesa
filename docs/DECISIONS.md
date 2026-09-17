@@ -23,6 +23,8 @@ against. The status column stays the review queue.
 | 🟢 | D006 | [The C++ standard library is ours, and only the parts Mesa reaches](decisions/D006-the-cpp-standard-library-is-ours-and-only-the-parts-mesa-reaches.md) | decided | 2026-09-14 |
 | 🟢 | D007 | [A syncobj is a local handle onto a polled 64-bit fence, and it starts binary](decisions/D007-a-syncobj-is-a-local-handle-onto-a-polled-64-bit-fence.md) | decided | 2026-09-17 |
 | 🟢 | D008 | [The part reports FUSION, because this winsys already says so everywhere else](decisions/D008-the-part-reports-fusion-because-this-winsys-already-says-so-everywhere-else.md) | decided | 2026-09-17 |
+| 🟢 | D009 | [The display adopts Mesa's buffer, not the other way round](decisions/D009-the-display-adopts-mesas-buffer-not-the-other-way-round.md) | decided | 2026-09-17 |
+| 🟢 | D010 | [The platform shim is a DRI loader, and EGL waits](decisions/D010-the-platform-shim-is-a-dri-loader-and-egl-waits.md) | decided | 2026-09-17 |
 
 | | meaning |
 |---|---|

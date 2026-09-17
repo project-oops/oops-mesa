@@ -10,6 +10,11 @@ the shared [OOPS conventions, section 1](../docs/CONVENTIONS.md#1-provenance-is-
 
 - **Mesa 3D** (MIT and per-file licences), pinned at the commit in `dependencies.mk`. The GL
   API, GLSL, NIR, the AMD driver, the address library and the ACO shader backend are Mesa's.
+- **FreeBSD** (BSD-2-Clause), the operating system the hardware's kernel derives from. Its C
+  library headers are the compile-time interface the runtime shim builds against (D002, pinned
+  by D004): `freebsd-src` at `ee81cd1d8f5596a6ab4c8eb29009405572cc162b`, staged into an ignored
+  sysroot and verified against `dependencies.mk`. No FreeBSD code is here, only its headers, at
+  build time.
 
 ## Prior art read for candidates, 2026-09-14
 
@@ -36,9 +41,6 @@ contradicted is listed in that worklog with repository, commit and path.
 
 - **OpenGNM** (MIT): named by ps5-opengl as the source of shader-container declarations. It
   will be credited here with a commit when it is read.
-- **FreeBSD** (BSD-2-Clause): the operating system the hardware's kernel derives from; its C
-  library headers are the candidate compile-time interface for the runtime shim (D002). The
-  pinned revision will be recorded here when chosen.
 
 ## Measurements this project stands on
 

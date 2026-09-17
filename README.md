@@ -17,21 +17,24 @@ Status: **skeleton**. Nothing renders yet. The roadmap below says what comes fir
 | `mesa/` | upstream Mesa, submodule, pinned in `dependencies.mk` | upstream |
 | `patches/` | numbered patches applied to Mesa at build time, each small and explained | us |
 | `src/winsys/` | buffers, mapping, command submission, fences, over the vendor driver calls oops-sdk binds | us |
-| `src/platform/` | presentation through the display the SDK opens, and the runtime layer Mesa stands on | us |
+| `src/runtime/` | the C-runtime surface Mesa stands on: the thread mapping over the vendor thread API, the absent-libc stubs, the C++ support source, and the start-up ABI symbols | us |
+| `src/platform/` | presentation through the display the SDK opens; designed (D009, D010), not written yet | us |
 | `toolchain/` | the container build: image, cross file, the pinned C-library headers | us |
-| `tools/` | host tools built against the pinned Mesa; `preamble-dump` prints the preamble radeonsi emits for this hardware, and its two outputs are tracked as data | us |
+| `tools/` | host tools built against the pinned Mesa; `preamble-dump` prints the command-stream preamble radeonsi emits for this hardware and `tiling-compare` checks a radeonsi surface against oops-sdk's tiler, their outputs tracked as data | us |
 | `docs/` | decisions, roadmap, worklog | us |
 
-Nothing in `src/` exists yet; the directories appear with the unit of work that fills them.
+`src/winsys/` and `src/runtime/` are populated; `src/platform/` is not written yet. Each
+directory appears with the unit of work that fills it.
 
 ## How a title consumes it
 
 Through a static SDK linked by the same `app.mk` every oops-apps title uses, packaged by
-SELFish and deployed by Prosperous. The application sees standard EGL and OpenGL 3.3; the one
-platform-specific value is the native window handle, which is the display oops-sdk already
-opens. A title built this way is hosted, not freestanding: it carries the runtime layer this
-repository provides. That is a different contract from the rest of oops-sdk and is stated
-wherever the two could be confused.
+SELFish and deployed by Prosperous. The application draws with OpenGL 3.3, reached through
+Mesa's Gallium DRI frontend rather than EGL - upstream builds EGL as a shared library a static
+title cannot link, so the loader underneath is the entry point (D010). Presentation is the
+display oops-sdk already opens. A title built this way is hosted, not freestanding: it carries
+the runtime layer this repository provides. That is a different contract from the rest of
+oops-sdk and is stated wherever the two could be confused.
 
 ## Read next
 
@@ -46,8 +49,8 @@ wherever the two could be confused.
 
 ```sh
 ./bin/oops-mesa check    # the submodule is at its pin and the tree has what CI expects
-./bin/oops-mesa build    # fails loudly until the container build exists (roadmap unit 3)
-./bin/oops-mesa test     # fails loudly until there is something to test
+./bin/oops-mesa build    # stage the sysroot, then configure and build Mesa in the container
+./bin/oops-mesa test     # the winsys shim's host suite
 ./bin/oops-mesa clean
 ```
 

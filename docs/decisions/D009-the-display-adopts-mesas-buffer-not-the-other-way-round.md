@@ -77,8 +77,14 @@ The first attempt to register a radeonsi buffer *is* the measurement.
 - Which of the two buffers is being drawn into, and the flip. oops-sdk owns this already -
   `sceVideoOutSubmitFlip` and a flip queue measured 26 deep (`REQ-20260909T1020Z-a51e`) - so the
   shim schedules rather than implements.
-- The format word. The display is handed `0x8000000000000000` with 32-bit pixels and nothing in
-  the collection says which Gallium format that is. Worklog 030 lists it; it is still open.
+- ~~The format word.~~ **Closed 2026-09-17 (worklog 033).** `PIPE_FORMAT_B8G8R8A8_UNORM`.
+  `REQ-20260909T1315Z-71dc`, sweep `20260909-144348`, read the display controller through
+  `/dev/dce`: pixel format `0x80000000`, glossed linear SDR B8G8R8A8_UNORM, with a stride of
+  exactly `width * 4`. `ac_get_cb_format` maps it to `V_028C70_COLOR_8_8_8_8`, so radeonsi can
+  render to it on this generation. Two things stay open and are stated there: whether the 64-bit
+  value `agc_display.c` passes is the same encoding as the 32-bit register, and whether sRGB
+  encoding applies - the shim asks for `UNORM`, and a wrong choice there is a gamma error rather
+  than a swapped channel.
 
 ## What would reverse this
 

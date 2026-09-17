@@ -43,3 +43,7 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [029. Context creation is covered, and sparse is the one that is not](worklog/029-context-creation-is-covered-and-sparse-is-the-one-that-is-not.md) |
 | - | [030. Presentation, and an extrapolation worth catching](worklog/030-presentation-and-an-extrapolation-worth-catching.md) |
 | - | [031. The extrapolation checked out, and now it is checked](worklog/031-the-extrapolation-checked-out-and-now-it-is-checked.md) |
+| - | [032. The import direction is closed at the libdrm level](worklog/032-the-import-direction-is-closed-at-the-libdrm-level.md) |
+| - | [033. The format word is B8G8R8A8, and one half of that is measured](worklog/033-the-format-word-is-b8g8r8a8-and-one-half-of-that-is-measured.md) |
+| - | [034. Nothing currently gives a title a GL context](worklog/034-nothing-currently-gives-a-title-a-gl-context.md) |
+| - | [035. The loader ABI is the one Mesa header safe to show a title](worklog/035-the-loader-abi-is-the-one-mesa-header-safe-to-show-a-title.md) |
