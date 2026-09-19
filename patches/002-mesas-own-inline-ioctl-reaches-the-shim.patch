@@ -1,0 +1,66 @@
+# 002-mesas-own-inline-ioctl-reaches-the-shim.patch
+#
+# What it changes
+#   One call site in Mesa proper: `drm_ioctl` in `src/util/os_drm.h` calls the shim instead of
+#   ioctl(2), guarded by OOPS_MESA_WINSYS so the patch is inert anywhere else. `drm_ioctl_write`
+#   and `drm_ioctl_write_read` both funnel through it, so this one site covers every caller.
+#
+# Why patch 001 was not enough, which took five hardware runs to see
+#   001 intercepts `drmIoctl` in libdrm. But Mesa does not always go through libdrm. Its own
+#   header says so at the top, and the sentence is the whole bug:
+#
+#     "These are identical to libdrm functions drmCommandWrite* and drmIoctl, but unlike
+#      libdrm, these are inlinable."
+#
+#   So there are two routes to the same command set. libdrm's `amdgpu_device_initialize` takes
+#   the first and reaches the shim; Mesa's `ac_drm_query_*` family takes the second and called
+#   the platform's real ioctl(2), which has no DRM device behind it. The failure was invisible
+#   from inside the shim precisely *because* the call never arrived: a numbered log of every
+#   ioctl showed twelve calls, all answered 0, and then radeonsi giving up with no thirteenth.
+#
+#   On the 2026-09-17 15:23 run the split is exact. Queries 0, 22, 21, 3 and 2 arrive through
+#   libdrm and are answered. `ac_drm_query_gpu_info` then asks for AMDGPU_INFO_DEV_INFO through
+#   the inline route, and nothing reaches the shim at all.
+#
+# Why it could not be a shim
+#   Same reason as 001, and more sharply. These are `static inline` functions in a header: they
+#   are compiled into every caller, so there is no symbol to interpose on. Defining `ioctl`
+#   ourselves would capture every ioctl the title makes - its own file access included - and
+#   route it into a graphics winsys. One call site is smaller and says what it means.
+#
+# Why it is not upstreamable as-is
+#   As 001: a port to a platform upstream has no knowledge of, and it would want to be a
+#   build-time backend selection rather than an ifdef.
+#
+# Applies to: mesa-26.2.2, the pin in dependencies.mk (D004).
+diff --git a/src/util/os_drm.h b/src/util/os_drm.h
+index 0390ecdb..d6ff277d 100644
+--- a/src/util/os_drm.h
++++ b/src/util/os_drm.h
+@@ -17,10 +17,18 @@
+ #include <sys/ioctl.h>
+ #include <errno.h>
+ #include <xf86drm.h>
++#ifdef OOPS_MESA_WINSYS
++#include "oops_winsys.h"
++#endif
+ 
+ static inline int
+ drm_ioctl(int fd, uint32_t request, void *arg)
+ {
++#ifdef OOPS_MESA_WINSYS
++   /* The shim already answers in this function's own convention - 0, or a negative errno - so
++    * the result passes straight through. */
++   return oops_winsys_ioctl(fd, request, arg);
++#else
+    int ret;
+ 
+    do {
+@@ -28,6 +36,7 @@ drm_ioctl(int fd, uint32_t request, void *arg)
+    } while (ret == -1 && (errno == EINTR || errno == EAGAIN));
+ 
+    return ret ? -errno : 0;
++#endif
+ }
+ 
+ static inline int

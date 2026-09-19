@@ -86,3 +86,12 @@ test:
 	    $(OOPS_SDK)/src/memory/memory.c \
 	    -o build/host/winsys_test
 	@./build/host/winsys_test
+	@#
+	@# The runtime shim gets its own binary, because `stderr_to_klog.c` defines `fprintf`,
+	@# `fwrite`, `fputs`, `fputc`, `puts`, `fflush` and `perror`. Linking it into the suite above
+	@# would redirect that suite's own reporting into the log sink, and it would pass silently.
+	@cc -std=c11 -Wall -Wextra -Werror -DOOPS_HOST_BUILD \
+	    -Isrc/runtime \
+	    tests/runtime_test.c \
+	    -o build/host/runtime_test
+	@./build/host/runtime_test

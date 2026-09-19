@@ -39,11 +39,19 @@ OOPS_MESA_SYSROOT := $(OOPS_MESA_DIR)/toolchain/sysroot
 # and generated headers that only exist after a build, and none of it survives the warning flags a
 # title compiles at. A title that needs `pipe_screen_config` restates those three fields with the
 # pin named beside them, which is what mesa-probe does.
+# `mesa/src/gallium/include` is here for one header: `mesa_interface.h`, Mesa's loader ABI. It is
+# the seam D010 puts the platform shim on, and unlike the rest of the gallium tree it is safe to
+# expose - it includes `<stdbool.h>` and `<stdint.h>` and nothing else, deliberately, because
+# loaders outside Mesa include it. It compiles at this title's full `-Wconversion
+# -Wsign-conversion -Werror` setting with no suppression, which `util/driconf.h` next door does
+# not (worklog 035).
 OOPS_MESA_INCLUDE := \
     --sysroot=$(OOPS_MESA_SYSROOT) \
     -I$(OOPS_MESA_DIR)/mesa/include \
     -I$(OOPS_MESA_DIR)/mesa/src \
+    -I$(OOPS_MESA_DIR)/mesa/src/gallium/include \
     -I$(OOPS_MESA_DIR)/src/winsys \
+    -I$(OOPS_MESA_DIR)/src/platform \
     -DOOPS_MESA_HOSTED=1
 
 # The shims this repository owns. They compile with the title rather than shipping as an archive,
@@ -58,7 +66,23 @@ OOPS_MESA_SRCS := \
     $(OOPS_MESA_DIR)/src/winsys/syncobj.c \
     $(OOPS_MESA_DIR)/src/runtime/threads.c \
     $(OOPS_MESA_DIR)/src/runtime/abi.c \
-    $(OOPS_MESA_DIR)/src/runtime/libc_absent.c
+    $(OOPS_MESA_DIR)/src/runtime/libc_absent.c \
+    $(OOPS_MESA_DIR)/src/runtime/stderr_to_klog.c \
+    $(OOPS_MESA_DIR)/src/platform/dri_loader.c
+
+# `src/platform/dri_loader.c` joined the build on 2026-09-17, after two separate reasons for
+# keeping it out were each dealt with.
+#
+# It was out first because it did not compile: `dri_create_image`'s format argument had no source
+# a title could reach (worklog 037). That went away when the format turned out not to need
+# naming - it is carried opaquely out of the chosen `dri_config` (worklog 039).
+#
+# It was out second because linking it pulls in the whole Gallium DRI frontend, and the fixup then
+# could not place 55 imported symbols. Those are now accounted for: 24 driver descriptors come
+# from the target object the build already produced and now puts in `link-order.txt`, four System V
+# shared-memory calls are stubs in `libc_absent.c`, the corpus placed the rest once that object was
+# in the link, and the last one was a weak undefined symbol that `obscene-tool` should never have
+# asked about (obSCEne REQ-20260917T1755Z-4a91, fixed there).
 
 # The C++ half of the shim ships as an archive rather than as a source, for two reasons: it
 # touches no oops-sdk header so it has nothing to bind to, and a title compiles its own sources
@@ -74,11 +98,64 @@ OOPS_MESA_LIBS := $(addprefix $(OOPS_MESA_DIR)/,$(shell \
         cat $(OOPS_MESA_DIR)/build/link-order.txt; \
     fi))
 
-# libelf and the compiler's processor-feature object, built for the target by the container
-# build. radeonsi will not start without the first; AddressLib asks the second whether the CPU
+# The public GL entry points, taken whole, and both halves of that are deliberate.
+#
+# # Why it is a separate line rather than an entry in link-order.txt
+#
+# `link-order.txt` is derived from Mesa's own DRI link line, and this archive is not on it -
+# upstream builds it only for libGL, which this configuration does not produce. The container
+# build asks for it explicitly; see the note there for how a title calling `glGetString` ended up
+# importing it from one of the platform's own GL libraries instead.
+#
+# # Why --whole-archive, which is not the usual answer
+#
+# A title's own sources are placed *after* the archives on the link line (`app.mk`), and a static
+# archive member is only pulled to satisfy a reference the linker has already seen. So a symbol
+# referenced only by the title and defined only in an archive is never pulled in - which is why
+# `radeonsi_screen_create` resolves today only because `dri_target.c.o` happens to reference it
+# first, not because the title does.
+#
+# For GL that fallback does not exist: nothing inside Mesa references `glGetString` on a title's
+# behalf. Taking the archive whole is the honest fix, and it is also the right shape - a title's
+# GL entry points are its API surface, and which of them it calls is not something the build
+# knows. 1,300 thunks into the dispatch table is what that costs.
+#
+# The alternative was to reorder `app.mk` so every title's objects precede the archives. That is
+# the deeper fix and it is not made here, because it changes the link of every title in oops-apps
+# to solve a problem one of them has.
+# It leads the list rather than joining the end, because the thunks reference
+# `_mesa_glapi_tls_Dispatch` and `libglapi.a` - which defines it - is further down. Taken whole at
+# the end, the reference would have nothing after it to resolve against.
+#
+# `app.mk` filters flags out of the dependency list, so the archive is still a prerequisite of the
+# link and the two `-Wl,` entries are not mistaken for files.
+OOPS_MESA_GLAPI_BRIDGE := $(OOPS_MESA_DIR)/build/mesa/src/mesa/glapi/glapi/libglapi_bridge.a
+ifneq ($(wildcard $(OOPS_MESA_GLAPI_BRIDGE)),)
+OOPS_MESA_LIBS := -Wl,--whole-archive $(OOPS_MESA_GLAPI_BRIDGE) -Wl,--no-whole-archive \
+                  $(OOPS_MESA_LIBS)
+else
+$(warning oops-mesa: no libglapi_bridge.a; a title will import GL names instead of calling Mesa)
+endif
+
+# libelf, libm and the compiler's processor-feature object, built for the target by the container
+# build. radeonsi will not start without the first; AddressLib asks the last whether the CPU
 # has AVX2.
+#
+# `-lm` is not the usual no-op it is on a hosted system. The platform's C library does not export
+# the arithmetic Mesa calls - measured absent twice over on firmware 12.40, from the export
+# census and from a dynamic lookup both (obscene REQ-20260917T1640Z-5b28) - so this archive is
+# where `sin`, `floor`, `log` and their kin actually come from. Without it they are placed as
+# imports from a mined corpus, the title loads, and the console kills it on the first call.
+#
+# It goes last because it answers and asks for nothing: Mesa's archives reference it, and it
+# references only what the staged sysroot already has.
+# `-lrune` is the C locale's character tables. `ctype.h` inlines the table lookup rather than
+# calling into the C library, so `tolower` in Mesa reads `_CurrentRuneLocale` directly - and that
+# symbol is not bindable on the native leg, because the census listing it was captured under the
+# PS4 backward-compatibility container (obscene REQ-20260917T1818Z-9f41). Without this a `ctype`
+# call on the startup path reads through an unresolved pointer.
 OOPS_MESA_SYSLIBS := \
-    -L$(OOPS_MESA_DIR)/toolchain/sysroot/usr/lib -loopsmesa_cxx -lelf -lcpu_model
+    -L$(OOPS_MESA_DIR)/toolchain/sysroot/usr/lib -loopsmesa_cxx -lelf -lcpu_model -lm -lrune
 
 # Mesa is C++ where it matters, so a title linking it needs the C++ headers this build compiles
 # against. The platform's own C++ library cannot serve them (D006).

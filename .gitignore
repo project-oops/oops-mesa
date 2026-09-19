@@ -12,6 +12,11 @@ toolchain/sysroot/
 toolchain/libelf-src/
 toolchain/libcxx-src/
 
+# FreeBSD's own msun (math library) and locale sources, fetched the same way (D011). Upstream
+# code, carried through the build rather than kept here.
+toolchain/msun-src/
+toolchain/locale-src/
+
 # Editor and OS noise.
 *.swp
 .DS_Store

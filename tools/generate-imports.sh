@@ -52,7 +52,91 @@ else
     echo "oops-mesa: no nm on PATH; cannot read the binary's imports" >&2
     exit 1
 fi
-"$nm_cmd" --dynamic --undefined-only "$elf" | awk '{print $NF}' | sort -u > "$work/undef.txt"
+# **Weak undefined symbols are skipped, and that is not a shortcut.**
+#
+# A weak undefined symbol is defined to resolve to zero when nothing provides it, and the code
+# referencing it is written to check. Demanding a library for one is therefore wrong twice: there
+# may be no library that has it, and binding it would defeat the guard that makes it safe.
+#
+# The case that found this is C++ thread-local access. `main_shader_query.cpp` and
+# `main_uniform_query.cpp` both carry a weak reference to `_ZTH23_mesa_glapi_tls_Context`, the
+# Itanium ABI's initialiser for that thread-local. `_mesa_glapi_tls_Context` is a C variable with
+# no dynamic initialisation, so no such function exists or should - clang emits
+# `if (&_ZTH... ) _ZTH...();` and the address is meant to come out zero.
+#
+# Before this filter it appeared as an unplaceable import and stopped the build asking for a
+# library by hand, which is a question with no correct answer.
+#
+# `nm` prints the type letter in the field before the name, and lowercase `w` is a weak undefined
+# (`v` is the weak-object spelling); uppercase `U` is the ordinary one this file wants.
+if ! "$nm_cmd" --dynamic --undefined-only "$elf" 2>"$work/nm.err" \
+    | awk '$(NF-1) != "w" && $(NF-1) != "v" { print $NF }' | sort -u > "$work/undef.txt"; then
+    echo "oops-mesa: $nm_cmd could not read $elf" >&2
+    sed 's/^/    /' "$work/nm.err" >&2
+    exit 1
+fi
+
+# An empty import list means the binary was not readable, not that it imports nothing.
+#
+# `make title` runs the module fixup, which rewrites `build/<app>.elf` **in place** into a module
+# - no longer something `nm` can parse. Run in the wrong order, `nm` prints `file format not
+# recognized` to stderr, exits 0 with nothing on stdout, and this script then writes a manifest
+# containing only the shared list: 400 lines where 480 were needed, reported cheerfully as "0
+# unknown". That happened on 2026-09-17 and both Mesa titles briefly carried it (worklog 043).
+#
+# A title that links Mesa cannot import nothing - it needs `malloc` at the very least - so zero is
+# proof the read failed rather than a result. The order is: fresh link, `make imports`, `make
+# title`, which each Makefile says in a comment and which this now enforces.
+if [ ! -s "$work/undef.txt" ]; then
+    echo "oops-mesa: $elf has no undefined dynamic symbols, which is not possible for a title" >&2
+    echo "  that links Mesa. Almost certainly this ran after 'make title' and the file is a" >&2
+    echo "  fixed-up module rather than a linked ELF - $nm_cmd cannot read one." >&2
+    if [ -s "$work/nm.err" ]; then
+        echo "  $nm_cmd said:" >&2
+        sed 's/^/    /' "$work/nm.err" >&2
+    fi
+    echo "  Relink first: rm -f the .elf, 'make elf', then 'make imports', then 'make title'." >&2
+    rm -f "$out"
+    exit 1
+fi
+
+# Names that must never be imports, checked before the corpus is consulted at all.
+#
+# # Why this check exists
+#
+# "0 unknown" means every name found a library. It does **not** mean every name found the right
+# one, and on 2026-09-17 that distinction cost a real bug: `dri-probe` called `glGetString`,
+# nothing in the link defined it, and the corpus placed it - confidently, with five sources
+# behind the row - in `libSceGLSlimServerVSH`, one of the platform's own PS4-era GL libraries.
+#
+# The title would have loaded and called the **vendor's** OpenGL instead of Mesa's, or trapped.
+# Neither looks like a build problem, and nothing in this script objected, because the corpus did
+# have an answer. The actual fault was that `libglapi_bridge` - upstream's `build_by_default :
+# false` archive holding the public entry points - was not being built (oops-mesa worklog 043).
+#
+# # Why a namespace test is sound rather than a heuristic
+#
+# These prefixes belong to Mesa and to this project. There is no circumstance in which a title
+# should resolve `glGetString`, `_mesa_error` or `radeonsi_screen_create` from a platform library:
+# if one is undefined, an archive is missing from the link, and importing it is always the wrong
+# repair. So this is a statement about ownership, not a guess about intent.
+#
+# The failure is loud and names the fix, because the fix is never "place it somewhere".
+: > "$work/owned.txt"
+grep -E '^(gl[A-Z]|_mesa_|dri[A-Z_]|radeonsi_|_eglInternal|ac_|aco_)' "$work/undef.txt" \
+    > "$work/owned.txt" || true
+if [ -s "$work/owned.txt" ]; then
+    echo "oops-mesa: these are Mesa's own symbols and a title must never import them:" >&2
+    sed 's/^/    /' "$work/owned.txt" >&2
+    echo >&2
+    echo "  An archive is missing from the link, not a library from the manifest. Placing one of" >&2
+    echo "  these would bind a title to the platform's own GL - which the corpus will happily" >&2
+    echo "  offer, and which is not the GL this project builds." >&2
+    echo "  Check build/link-order.txt and whether the defining target was built at all;" >&2
+    echo "  libglapi_bridge is not built by default upstream." >&2
+    rm -f "$out"
+    exit 1
+fi
 
 # The shared list already places some of them; those lines are reused rather than regenerated,
 # so a title agrees with the rest of oops-apps about which spelling of a library to use.

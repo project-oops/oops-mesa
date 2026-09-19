@@ -109,6 +109,12 @@ int oops_winsys_copy_out(const void *request, const void *src, unsigned long siz
     unsigned long n = size < info->return_size ? size : info->return_size;
 
     if (!info->return_pointer || !n) {
+        /* Refusing without a word is how a query that this file believes it answers can fail
+         * anyway and leave nothing in the log to say so. Every refusal in this file names
+         * itself. */
+        oops_winsys_log("query %u: no reply written (pointer %s, want %lu, room %lu)",
+                        info->query, info->return_pointer ? "ok" : "null",
+                        size, (unsigned long)info->return_size);
         return -EINVAL;
     }
     memcpy((void *)(uintptr_t)info->return_pointer, src, n);
@@ -122,6 +128,33 @@ static int unimplemented(const char *name)
 }
 
 /*
+ * One line per distinct AMDGPU_INFO query, the first time it is asked.
+ *
+ * A hardware run is the expensive resource here: build, deploy, launch, read the log. A log that
+ * names only the query that failed turns "which queries does radeonsi actually need" into one
+ * run per query. This turns it into one run, because the trace is the whole sequence radeonsi
+ * asked for in order, and the refusal is wherever it stops.
+ *
+ * First-time-only because several of these are asked in loops - a per-call line would bury the
+ * sequence in repeats. The codes are small and dense (`AMDGPU_INFO_*` runs to about 0x22), so a
+ * 64-bit set covers every one defined today, and anything outside it is logged every time rather
+ * than silently dropped.
+ */
+static void trace_query(uint32_t query)
+{
+    static uint64_t seen;
+
+    if (query < 64u) {
+        uint64_t bit = (uint64_t)1 << query;
+        if (seen & bit) {
+            return;
+        }
+        seen |= bit;
+    }
+    oops_winsys_log("AMDGPU_INFO query %u (0x%x) asked", query, query);
+}
+
+/*
  * The device description. radeonsi reads this before it programs anything and will not start
  * without plausible answers, so every field here has to say where it came from.
  *
@@ -129,7 +162,7 @@ static int unimplemented(const char *name)
  * REQ-20260914T1558Z-7d41; until it returns, this refuses rather than inventing, and what it does
  * answer is either something the collection has seen or the kernel's own answer at run time.
  */
-int oops_winsys_info(struct drm_amdgpu_info *info)
+static int info_query(struct drm_amdgpu_info *info)
 {
     switch (info->query) {
     case AMDGPU_INFO_ACCEL_WORKING: {
@@ -274,18 +307,116 @@ int oops_winsys_info(struct drm_amdgpu_info *info)
         ip.available_rings = 0x1;
         return oops_winsys_copy_out(info, &ip, sizeof(ip));
     }
+
+    case AMDGPU_INFO_HW_IP_COUNT: {
+        /*
+         * How many instances of an IP block there are - not how many rings one instance has,
+         * which is `available_rings` above. Mesa asks it per IP type and tolerates a refusal
+         * (`ac_gpu_info.c:1505` only stores the answer `if (!ac_drm_query_hw_ip_count(...))`),
+         * so this is not known to unblock anything. It is answered because the answer is not a
+         * guess: the case above already states that this device presents one graphics IP with
+         * one ring, and a count of 1 is that same fact said the other way round. Two places
+         * describing one device must not disagree.
+         *
+         * Anything other than graphics refuses, exactly as `HW_IP_INFO` does, rather than
+         * reporting zero instances - a refusal says "not answered here", a zero would be a claim
+         * about the hardware that nothing has measured.
+         */
+        uint32_t count = 1;
+
+        if (info->query_hw_ip.type != AMDGPU_HW_IP_GFX) {
+            oops_winsys_log("hardware IP type %u has no instance count; only graphics is known",
+                            info->query_hw_ip.type);
+            return -ENOSYS;
+        }
+        return oops_winsys_copy_out(info, &count, sizeof(count));
+    }
+
     default:
-        return unimplemented("AMDGPU_INFO (unrecognised query)");
+        /* Naming the query is not a nicety. A refusal here costs a build, a deployment and a
+         * hardware run to observe, and "unrecognised query" spends all of that without saying
+         * which one - which is exactly what the 2026-09-17 run cost. The number is what maps to
+         * a name in `amdgpu_drm.h`. */
+        oops_winsys_log("ioctl AMDGPU_INFO query %u (0x%x) is not implemented yet",
+                        info->query, info->query);
+        return -ENOSYS;
     }
 }
 
+/*
+ * Every AMDGPU_INFO query, and what it answered.
+ *
+ * `trace_query` reports the first time each query is asked, which keeps a loop from burying the
+ * sequence. That suppression hid the thing it was built to find: on the 2026-09-17 15:11 run
+ * every query was traced exactly once and answered, and radeonsi still gave up - because the
+ * query that failed was a *repeat* of one already traced, and the handler that failed it said
+ * nothing.
+ *
+ * So a failure is never suppressed, however many times it has been seen. A success stays quiet
+ * after the first, because that is the noise the trace exists to avoid.
+ */
+int oops_winsys_info(struct drm_amdgpu_info *info)
+{
+    int r;
+
+    trace_query(info->query);
+    r = info_query(info);
+    if (r != 0) {
+        oops_winsys_log("AMDGPU_INFO query %u (0x%x) answered %d", info->query, info->query, r);
+    }
+    return r;
+}
+
+static int ioctl_dispatch(unsigned long request, void *arg);
+
 int oops_winsys_ioctl(int fd, unsigned long request, void *arg)
 {
+    static unsigned s_seq;
+    unsigned n = ++s_seq;
+    int r;
+
     if (fd != OOPS_WINSYS_FD) {
+        /*
+         * The winsys hands out exactly one descriptor, so a call on any other one cannot be
+         * served. Saying so matters: if Mesa ever duplicates the descriptor - and a loader that
+         * takes ownership of a device fd is entitled to - then every call after that point
+         * arrives here and fails, and a silent -EBADF makes that look like the driver simply
+         * stopped asking for things.
+         *
+         * One line per descriptor rather than per call, because a refused fd tends to be refused
+         * in a loop.
+         */
+        static int s_complained = -1;
+
+        if (fd != s_complained) {
+            s_complained = fd;
+            oops_winsys_log("ioctl on fd %d, but this winsys only serves fd %d; refusing",
+                            fd, OOPS_WINSYS_FD);
+        }
         return -EBADF;
     }
-    (void)arg;
+    r = ioctl_dispatch(request, arg);
 
+    /*
+     * Every call, numbered, with what it answered - and never suppressed as a repeat.
+     *
+     * The three instruments before this one each answered a narrower question than the one that
+     * mattered, and each cost a hardware run. They could all say *which* commands this shim
+     * handled; none could say *how many times*. That is the whole difficulty: on the
+     * 2026-09-17 15:15 run the device description and the GB_ADDR_CONFIG line each appeared
+     * exactly once, which is consistent both with radeonsi asking once and with it asking twice
+     * and something between here and there swallowing the second. Those two readings point at
+     * completely different faults and the log could not separate them.
+     *
+     * A sequence number separates them, because a repeat is now a line of its own. The volume is
+     * small - the whole startup path is a handful of commands - so nothing here needs rationing.
+     */
+    oops_winsys_log("ioctl #%u 0x%lx answered %d", n, request, r);
+    return r;
+}
+
+static int ioctl_dispatch(unsigned long request, void *arg)
+{
     switch (request) {
     /* The path to a first frame. These six are what a triangle needs, and they are the order
      * unit 5 implements them in. */
@@ -470,6 +601,22 @@ int oops_winsys_get_cap(struct drm_get_cap *arg)
     case DRM_CAP_ADDFB2_MODIFIERS:
         arg->value = 0;
         return 0;
+
+    case DRM_CAP_PRIME:
+        /*
+         * Buffer sharing between processes, which this platform does not do and which D009
+         * settled from the other side: libdrm refuses `amdgpu_bo_handle_type_kms` imports with
+         * `-EPERM`, and every remaining handle type is a cross-process mechanism that does not
+         * exist here (worklog 032).
+         *
+         * So zero is an answer rather than a shrug. `u_screen.c:139` reads it into
+         * `caps->dmabuf`, and refusing left that field at its default - the same value by
+         * accident. Saying it deliberately is the difference between "no sharing" and "this shim
+         * did not know", and only one of those is true.
+         */
+        arg->value = 0;
+        return 0;
+
     default:
         oops_winsys_log("GET_CAP 0x%llx is not a capability this shim has decided",
                         (unsigned long long)arg->capability);

@@ -81,6 +81,113 @@ if [ ! -f "$LIBELF_A" ]; then
 fi
 
 
+# libm, built for the target from FreeBSD's own msun, out of the same pinned checkout.
+#
+# # Why the arithmetic has to be in the title
+#
+# The platform's C library does not export it. obSCEne swept 139 candidate imports on firmware
+# 12.40 and the maths came back absent twice over - absent from the export census and absent from
+# a dynamic lookup - for `sin`, `cos`, `floor`, `ceil`, `log`, `log10`, `atan2`, `powf`, `round`,
+# `trunc` and the float twins (REQ-20260917T1640Z-5b28). That failure is not a link error: the
+# import is placed from a mined corpus, the module loads, and the console kills the title on the
+# first call. So these are compiled in, and a name that is genuinely exported is still imported
+# the ordinary way.
+#
+# # Double and float only, on purpose
+#
+# Long double is not built: no `ld80`, and every `*l.c` is skipped. Mesa's GL and GLSL paths are
+# `float` and `double` throughout, so the 63 long-double sources would be dead weight carrying
+# their own header tree. The consequence is chosen rather than accepted - a reference to `sinl`
+# becomes an undefined symbol at link time here, which is a diagnostic at this desk, instead of
+# a plausible answer computed at the wrong precision on the console.
+#
+# The `.S` files under `amd64/` are deliberately not used either. They are optimisations of
+# functions that all have C implementations in `src/`, and FreeBSD's own build makes them
+# conditional on MK_MACHDEP_OPTIMIZATIONS for exactly that reason. C everywhere is one fewer
+# assembler in the loop for arithmetic that is not the bottleneck.
+#
+# The include path and the two flags are msun's own, from `lib/msun/Makefile` and
+# `lib/msun/amd64/Makefile.inc`, not chosen here.
+LIBM_SRC="$HERE/msun-src"
+LIBM_A="$HERE/sysroot/usr/lib/libm.a"
+if [ ! -f "$LIBM_A" ]; then
+    if [ ! -d "$LIBM_SRC/msun/src" ]; then
+        echo "oops-mesa: libm sources not staged; run toolchain/stage-sources.sh first" >&2
+        exit 1
+    fi
+    echo "oops-mesa: building libm for the target"
+    work="$ROOT/build/libm"
+    rm -rf "$work"; mkdir -p "$work"
+    # `fenv.c` is architecture-specific and has no copy in src/, which is why amd64/ is on the
+    # source list as well as the include path.
+    #
+    # `bsdsrc` contributes exactly one object and is named file by file rather than globbed:
+    # `b_tgamma.c` **#includes** `b_log.c` and `b_exp.c` as source, so compiling that directory
+    # wholesale builds the two of them a second time, standalone, without the definitions the
+    # including file provides. That fails on `copysign`, `ldexp` and `isfinite` being undeclared,
+    # which is what the first run of this did.
+    for c in "$LIBM_SRC"/msun/src/*.c "$LIBM_SRC"/msun/bsdsrc/b_tgamma.c \
+             "$LIBM_SRC"/msun/amd64/fenv.c; do
+        [ -f "$c" ] || continue
+        # Long double, not built - see above. The test is not the filename ending in `l.c` on its
+        # own, because three of these end that way for a different reason: the *function* is
+        # called `ceil`, `creal` or `isnormal`. A long-double source is always the twin of a
+        # double one beside it - `s_ceill.c` next to `s_ceil.c` - so the twin has to exist for
+        # the exclusion to hold. Naming alone dropped `ceil` and the whole `__isfinite` /
+        # `__isnormal` family on the first run of this, which mattered: those five are among the
+        # names the export census and the sweep disagree about, and having them locally settles
+        # the question instead of betting on it.
+        name=$(basename "$c")
+        case "$name" in
+            *l.c)
+                twin="${name%l.c}.c"
+                [ -f "$(dirname "$c")/$twin" ] && continue
+                ;;
+        esac
+        clang -target x86_64-unknown-freebsd --sysroot="$HERE/sysroot" \
+              -I"$LIBM_SRC/msun/src" -I"$LIBM_SRC/msun/x86" -I"$LIBM_SRC/msun/amd64" \
+              -I"$LIBM_SRC/libc/include" -I"$LIBM_SRC/libc/amd64" \
+              -fno-math-errno -ffp-exception-behavior=maytrap \
+              -fPIC -O2 -w -c "$c" -o "$work/$(basename "${c%.c}").o"
+    done
+    mkdir -p "$HERE/sysroot/usr/lib"
+    llvm-ar rcs "$LIBM_A" "$work"/*.o
+    echo "oops-mesa: libm.a built ($(llvm-ar t "$LIBM_A" | wc -l | tr -d ' ') objects)"
+fi
+
+
+# The C locale's character tables, built for the target from the same pinned checkout.
+#
+# One object, and it answers two symbols this platform will not bind: `_DefaultRuneLocale` and
+# `_CurrentRuneLocale`. See `stage-sources.sh` for why they are needed at all - `ctype.h` inlines
+# the table lookup, so `tolower` in Mesa reaches a global here rather than a call into libc, and
+# `REQ-20260917T1818Z-9f41` established that the census listing them was a GEN=4 capture and they
+# are not bindable natively.
+#
+# It also carries `__runes_for_locale`, which nothing in this link calls - measured, zero
+# references across every Mesa archive and every staged one. Its two libc-private dependencies
+# are therefore dead, and `libc_absent.c` defines them as the placeholders they are, with a note
+# saying so. Compiling the file whole rather than carving the function out keeps it identical to
+# upstream's, which is the property that makes staging it worth anything.
+RUNE_SRC="$HERE/locale-src"
+RUNE_A="$HERE/sysroot/usr/lib/librune.a"
+if [ ! -f "$RUNE_A" ]; then
+    if [ ! -f "$RUNE_SRC/locale/table.c" ]; then
+        echo "oops-mesa: locale sources not staged; run toolchain/stage-sources.sh first" >&2
+        exit 1
+    fi
+    echo "oops-mesa: building the C locale tables for the target"
+    work="$ROOT/build/rune"
+    rm -rf "$work"; mkdir -p "$work"
+    clang -target x86_64-unknown-freebsd --sysroot="$HERE/sysroot" \
+          -I"$RUNE_SRC/locale" -fPIC -O2 -w \
+          -c "$RUNE_SRC/locale/table.c" -o "$work/table.o"
+    mkdir -p "$HERE/sysroot/usr/lib"
+    llvm-ar rcs "$RUNE_A" "$work/table.o"
+    echo "oops-mesa: librune.a built ($(llvm-nm --defined-only "$RUNE_A" | grep -cE ' [TDRB] ') symbols)"
+fi
+
+
 # The compiler's own processor-feature object.
 #
 # AddressLib asks `__builtin_cpu_supports("avx2")` once, to pick between two swizzle paths that
@@ -350,7 +457,23 @@ if [ -f "$ROOT/src/runtime/cxx_support.cpp" ]; then
     rm -rf "$work"; mkdir -p "$work"
     cxxflags="-target x86_64-unknown-freebsd --sysroot=$HERE/sysroot -stdlib=libc++ -fPIC -O2"
 
-    clang++ $cxxflags -std=c++17 -c "$ROOT/src/runtime/cxx_support.cpp" \
+    # `-fno-exceptions` on ours only, and it is a correctness fix rather than a size one.
+    #
+    # `cxx_support.cpp` already states in its own comments that it does not throw, because Mesa is
+    # built with exceptions off - 139 times over in its own ninja file. But it was being compiled
+    # *with* them, so clang emitted the cleanup machinery anyway and the object carried undefined
+    # references to `__cxa_begin_catch` and `__gxx_personality_v0`. Those two reached the title's
+    # import table, where the corpus placed them in `libSceLibcInternal` on the strength of an
+    # export census row that obSCEne's own sweep contradicts (REQ-20260917T1818Z-9f41). So a file
+    # that does not throw was importing the exception ABI from a library that may not have it.
+    #
+    # Compiling it the way it says it is written removes both references outright, which is a
+    # better answer than either side of that conflict. Measured: the object's exception-ABI
+    # undefineds go from two to none and nothing else about it changes.
+    #
+    # Upstream's `stdexcept.cpp` below keeps exceptions, because throwing is precisely what it is
+    # for. Nothing in this link references it, so it costs a title nothing.
+    clang++ $cxxflags -std=c++17 -fno-exceptions -c "$ROOT/src/runtime/cxx_support.cpp" \
             -o "$work/cxx_support.o"
 
     # Upstream's own, for the parts it can still build. `-I src` is not optional: its sources
@@ -372,6 +495,33 @@ if [ -f "$ROOT/src/runtime/cxx_support.cpp" ]; then
     echo "oops-mesa: C++ support archive built (ours plus $upstream_ok upstream source)"
 fi
 
+# The public GL entry points, which this configuration does not build by default.
+#
+# # What was missing
+#
+# `libglapi.a` is built and is in the link, and it does **not** define `glGetString` or any other
+# `gl*` name. It is compiled `-DMAPI_MODE_SHARED_GLAPI` with hidden visibility, so what it carries
+# is the dispatch machinery and 1,648 `_dispatch_stub_*` symbols - the inside of GL, not its API.
+#
+# The public names live in `libglapi_bridge`, which upstream marks `build_by_default : false`
+# because the only thing that normally wants it is libGL, and libGL is a GLX target this build has
+# no reason to produce. So nothing asked for it, ninja did not build it, and a title calling
+# `glGetString` got an undefined symbol.
+#
+# **That was not a link error, which is what made it worth finding.** A title links with
+# `--unresolved-symbols=ignore-all`, so the name became an import, and the mined corpus placed it
+# confidently: `libSceGLSlimServerVSH`, one of the platform's own PS4-era GL libraries. A title
+# would have called *the vendor's* OpenGL, or trapped - and neither outcome would have looked like
+# a build problem. It was found by `dri-probe` being written to make the first GL call at all.
+#
+# It is a `static_library`, so unlike EGL (D010) there is nothing to work around: it only had to
+# be asked for.
+echo "oops-mesa: building the public GL entry points (libglapi_bridge)"
+ninja -C "$BUILD" src/mesa/glapi/glapi/libglapi_bridge.a >/dev/null 2>&1 || {
+    echo "oops-mesa: libglapi_bridge would not build; a title cannot call GL without it" >&2
+    exit 1
+}
+
 # The archives in the order Mesa links them, for a title to consume.
 #
 # These are static archives, so the linker resolves left to right and the order is load-bearing:
@@ -380,9 +530,24 @@ fi
 # Written relative to this repository's root, not absolute. The build runs in a container where
 # the repository is mounted at /w, and a consumer does not, so an absolute path here is a path
 # that exists nowhere the title is built. `oops-mesa.mk` prefixes its own directory.
-ninja -C "$BUILD" -t commands "$dri_so" 2>/dev/null | tail -1 \
-    | tr ' ' '\n' | sed -n 's/^\(.*\.a\)$/build\/mesa\/\1/p' \
-    > "$ROOT/build/link-order.txt"
+# Objects first, then archives.
+#
+# The line carries both, and taking only the archives was wrong: the DRI target's own object is
+# where every `*_driver_descriptor` lives. `drm_helper.h` defines the real one for whichever
+# `GALLIUM_<DRIVER>` the target was compiled with and a stub for all the others, so that single
+# object answers all twenty-four at once - `radeonsi` among them, which is why `radeonsi` itself
+# appeared unresolved while radeonsi was plainly built (worklog 039 called that the thread to
+# pull, and it was).
+#
+# Objects lead because they are always pulled in whole, while an archive member is only taken to
+# satisfy something already pending. `dri_target.c.o` *references* `radeonsi_screen_create`, so it
+# has to be seen before `libradeonsi.a` rather than after it.
+{
+    ninja -C "$BUILD" -t commands "$dri_so" 2>/dev/null | tail -1 \
+        | tr ' ' '\n' | sed -n 's/^\(.*\.o\)$/build\/mesa\/\1/p'
+    ninja -C "$BUILD" -t commands "$dri_so" 2>/dev/null | tail -1 \
+        | tr ' ' '\n' | sed -n 's/^\(.*\.a\)$/build\/mesa\/\1/p'
+} > "$ROOT/build/link-order.txt"
 
 echo "oops-mesa: built ${#archives[@]} archives for x86_64-unknown-freebsd"
 echo "oops-mesa: $localized libdrm archives had their private symbols localized; no duplicates remain"

@@ -47,3 +47,16 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [033. The format word is B8G8R8A8, and one half of that is measured](worklog/033-the-format-word-is-b8g8r8a8-and-one-half-of-that-is-measured.md) |
 | - | [034. Nothing currently gives a title a GL context](worklog/034-nothing-currently-gives-a-title-a-gl-context.md) |
 | - | [035. The loader ABI is the one Mesa header safe to show a title](worklog/035-the-loader-abi-is-the-one-mesa-header-safe-to-show-a-title.md) |
+| - | [036. The answer was no, and counting the sources was the wrong count](worklog/036-the-answer-was-no-and-counting-the-sources-was-the-wrong-count.md) |
+| - | [037. The first platform code, and the one value that is generated](worklog/037-the-first-platform-code-and-one-open-value.md) |
+| - | [038. The identifier was the blocker, and Mesa has two routes to an ioctl](worklog/038-the-identifier-was-the-blocker-and-mesa-has-two-routes-to-an-ioctl.md) |
+| - | [039. The platform shim compiles, and linking it costs fifty-five names](worklog/039-the-platform-shim-compiles-and-linking-it-costs-fifty-five-names.md) |
+| - | [040. Thread-local storage has exactly one workable model here](worklog/040-thread-local-storage-has-exactly-one-workable-model-here.md) |
+| - | [041. The DRI frontend links, and the last symbol was a platform rule](worklog/041-the-dri-frontend-links-and-the-last-symbol-was-a-platform-rule.md) |
+| - | [042. The screen has a citation, and the arithmetic has a library](worklog/042-the-screen-has-a-citation-and-the-arithmetic-has-a-library.md) |
+| - | [043. The first GL call found a library nobody built](worklog/043-the-first-gl-call-found-a-library-nobody-built.md) |
+| - | [044. A title finishes by not finishing](worklog/044-a-title-finishes-by-not-finishing.md) |
+| - | [045. The census was answering about a different machine](worklog/045-the-census-was-answering-about-a-different-machine.md) |
+| - | [046. The tool that says what is left was under-reporting it](worklog/046-the-tool-that-says-what-is-left-was-under-reporting.md) |
+| - | [047. Every import is now a measurement](worklog/047-every-import-is-now-a-measurement.md) |
+| - | [048. The full stack ran, and the parking ending met its catch](worklog/048-the-full-stack-ran-and-the-parking-ending-met-its-catch.md) |

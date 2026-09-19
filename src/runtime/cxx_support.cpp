@@ -58,6 +58,21 @@ void operator delete[](void *p) noexcept { free(p); }
 void operator delete(void *p, __SIZE_TYPE__) noexcept { free(p); }
 void operator delete[](void *p, __SIZE_TYPE__) noexcept { free(p); }
 
+/*
+ * The `nothrow` form, measured absent (`_ZnwmRKSt9nothrow_t`, obSCEne
+ * REQ-20260917T2045Z-a4f2). It is the one that needs no caveat at all: returning null on failure
+ * is its actual contract rather than a divergence from one, which makes it the only allocation
+ * operator here that behaves exactly as a program expects.
+ *
+ * Declared with the ABI's own spelling rather than by including `<new>`, which would pull the
+ * exception machinery this build compiles without.
+ */
+namespace std { struct nothrow_t; }
+void *operator new(__SIZE_TYPE__ size, const std::nothrow_t &) noexcept
+{
+    return malloc(size ? size : 1);
+}
+
 _LIBCPP_BEGIN_NAMESPACE_STD
 
 /*
@@ -161,3 +176,94 @@ _LIBCPP_END_NAMESPACE_STD
  * does compile with this compiler. The build adds it to the same archive as this file. See D006
  * for why most of libc++ does not.
  */
+
+/*
+ * `__cxa_pure_virtual`, the Itanium ABI's handler for a pure virtual function actually being
+ * called.
+ *
+ * # Why it is referenced at all
+ *
+ * Every class with a pure virtual member gets it in place of that slot in the vtable, so the
+ * reference comes from the vtable rather than from any call site. Measured, at this pin: four
+ * objects across `libglsl.a` and `libaddrlib.a` reference it - `ir.cpp`, `ir_rvalue_visitor.cpp`
+ * and two AddressLib sources - and nothing calls it on purpose anywhere.
+ *
+ * # Why it is defined here rather than imported
+ *
+ * It was an import, placed in `libSceLibcInternal` from an export census row that obSCEne's own
+ * sweep contradicts (REQ-20260917T1818Z-9f41). Waiting for that conflict to resolve would be the
+ * wrong way round, because **this function's behaviour is not in question**: reaching it means an
+ * object's vtable slot was still the pure one when it was called, which is a construction or
+ * destruction-order bug in the caller. There is no platform-specific right answer to import.
+ *
+ * So it does what the contract says and does not return. It is the `__assert` case: stop at the
+ * fault with the reason logged, rather than continue through a vtable that has just been shown to
+ * be wrong. `__libcpp_verbose_abort` above is the same shape for the same reason.
+ */
+/*
+ * Static-local initialisation, and exit-time destructor registration. Both measured absent
+ * (obSCEne REQ-20260917T2045Z-a4f2).
+ *
+ * # `__cxa_atexit` is on a live path, so it is not a stub
+ *
+ * `builtin_functions.cpp` references it - the GLSL built-in function table - so it runs the
+ * moment anything compiles a shader. What it is asked to do is register a destructor to run when
+ * the process exits, and **this process does not exit**: a big-app container cannot terminate
+ * itself, and a title parks instead (`REQ-20260917T1450Z-2e71`, worklog 044). Nothing is unloaded
+ * either; a title links archives and runs until the shell closes it.
+ *
+ * So the correct implementation is to accept the registration and never call it, which is what
+ * returning 0 means. That is not a stub declining to work - it is the whole contract, on a
+ * platform where the trigger never fires. Dropping the handler on the floor is what actually
+ * happens on every other platform too, for a process killed rather than exited.
+ *
+ * # The guards are real, because a wrong one is a double initialisation
+ *
+ * `texcompress_astc_luts.cpp` has a function-local static, and Mesa is multithreaded, so two
+ * threads can reach it at once. The Itanium ABI defines the guard as a 64-bit object whose first
+ * byte says "initialised" and whose second is the in-progress flag; `acquire` returns non-zero to
+ * the one caller that should run the initialiser and 0 to everyone else, and the losers must wait
+ * rather than proceed.
+ *
+ * This is the spin form rather than a futex, because the initialiser it guards is a lookup-table
+ * build that runs once and takes microseconds - and because a futex here would need the platform
+ * thread API that `threads.c` owns, from a file that deliberately has no oops-sdk dependency.
+ */
+extern "C" int __cxa_atexit(void (*func)(void *), void *arg, void *dso_handle) {
+    (void)func;
+    (void)arg;
+    (void)dso_handle;
+    return 0;
+}
+
+extern "C" int __cxa_guard_acquire(unsigned char *guard) {
+    unsigned char *done = guard;
+    unsigned char *pending = guard + 1;
+
+    if (__atomic_load_n(done, __ATOMIC_ACQUIRE)) {
+        return 0;
+    }
+    while (__atomic_exchange_n(pending, 1, __ATOMIC_ACQ_REL)) {
+        if (__atomic_load_n(done, __ATOMIC_ACQUIRE)) {
+            return 0;
+        }
+        __builtin_ia32_pause();
+    }
+    if (__atomic_load_n(done, __ATOMIC_ACQUIRE)) {
+        __atomic_store_n(pending, 0, __ATOMIC_RELEASE);
+        return 0;
+    }
+    return 1;
+}
+
+extern "C" void __cxa_guard_release(unsigned char *guard) {
+    __atomic_store_n(guard, 1, __ATOMIC_RELEASE);
+    __atomic_store_n(guard + 1, 0, __ATOMIC_RELEASE);
+}
+
+extern "C" void __cxa_pure_virtual() {
+    fprintf(stderr, "oops-mesa: a pure virtual function was called. The object's vtable slot was "
+                    "never overridden, which is a lifetime bug in the caller, not a missing "
+                    "platform symbol. Stopping here.\n");
+    abort();
+}

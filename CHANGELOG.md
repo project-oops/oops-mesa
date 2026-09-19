@@ -10,6 +10,21 @@ Entries are grouped **Added / Changed / Fixed**, newest first.
 
 ### Added
 
+- 2026-09-17: **Mesa's diagnostics reach the log** (`src/runtime/stderr_to_klog.c`). In title space
+  file descriptors 1 and 2 are open, accept writes, return the full byte count with `errno` zero,
+  and reach nothing - measured both ways, with `SYS_klog` surfacing in the same eboot sweep as the
+  control (`REQ-20260917T0233Z-5c9d`, sweeps `20260917-043235` payload and `20260917-095820`
+  eboot). `dup2(1, 2)` does not help, because fd 1 is dead too. Mesa reports its fatal errors with
+  `fprintf(stderr, ...)` and its own logger defaults there, so without this a failed screen
+  produced only this shim's own refusals and never Mesa's conclusions. The interception covers the
+  seven stdio entry points the **built archives** reference - `fprintf`, `vfprintf`, `fwrite`,
+  `fputs`, `fputc`, `puts`, `fflush`, `perror` - rather than the two the sources appear to use:
+  clang rewrites literal `fprintf` into `fwrite`, `%s` into `fputs` and single characters into
+  `fputc`, so counting call sites in the sources would have carried half the diagnostics and
+  dropped the rest. `fputc` forces line buffering, and long lines are split rather than truncated
+  because klog drops past about 128 bytes. Fifteen host checks in a new `tests/runtime_test.c`,
+  which `make test` runs as a second binary - the subject replaces the stdio a test suite would
+  otherwise report through, so sharing one would have let it pass silently. Worklog 036.
 - 2026-09-17: **`tools/tiling-compare`, and with it the fact that a radeonsi colour target is
   already in the layout the display scans out.** Worklog 017 matched addrlib against oops-sdk's
   tiler "across all 16,384 pixels of the block" - one 64 KiB block - and the conclusion was
