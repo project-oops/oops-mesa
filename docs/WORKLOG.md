@@ -75,3 +75,5 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [061. The shader ILLEGAL_INST is a wrong-ISA-generation shader (gfx11 on gfx10 silicon)](worklog/061-the-shader-is-gfx11-isa-on-gfx10-silicon.md) |
 | - | [062. The shader ILLEGAL_INST was a zeroed opcode table: .init_array was never run](worklog/062-init-array-was-never-run-so-acos-opcode-table-was-zero.md) |
 | - | [063. Presentation called the swrast swap, which is null for an image loader](worklog/063-present-called-the-swrast-swap-which-is-null-for-an-image-loader.md) |
+| - | [064. The first render: a clear to a known colour reads back pixel-exact](worklog/064-the-first-render-a-clear-reads-back-pixel-exact.md) |
+| - | [065. A frame from upstream Mesa on the panel: the flip works](worklog/065-a-frame-from-upstream-mesa-on-the-panel.md) |

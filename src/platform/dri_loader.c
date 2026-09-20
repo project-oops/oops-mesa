@@ -41,6 +41,19 @@
 
 #include "mesa_interface.h"
 #include "oops_platform.h"
+#include "oops/display.h"
+
+/*
+ * GL's own header, for the readback the flip half does. Same suppression as the title's includes:
+ * this file compiles at `-Wconversion -Wsign-conversion -Werror` and upstream's header is not ours
+ * to make clean. The flip reads the drawable back with `glReadPixels` because that is the one path
+ * that detiles radeonsi's colour buffer into the linear image the display wants.
+ */
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wconversion"
+#pragma clang diagnostic ignored "-Wsign-conversion"
+#include <GL/gl.h>
+#pragma clang diagnostic pop
 
 /* oops-sdk's log sink, and the winsys's own logger for anything below this layer. */
 extern void oops_klog(const char *tag, const char *msg);
@@ -111,6 +124,11 @@ struct oops_gl {
     int format;
     int fd;
     bool registered;   /* the display has been told about `back` */
+
+    /* The flip half: the scanout output, and a linear frame to read the drawable back into. Both
+     * are null when the display did not open, and present then flushes without flipping. */
+    oops_display_t *display;
+    uint32_t *scanbuf;
 };
 
 /*
@@ -378,6 +396,30 @@ struct oops_gl *oops_gl_create(uint32_t width, uint32_t height)
     }
 
     say("GL is current: screen, drawable and context are up");
+
+    /*
+     * Open the scanout output for the flip half of present, now that the GL stack is up and known
+     * good. CPU tiling is left in place - `oops_display_try_gpu_tiler` is deliberately not called -
+     * so the display converts frames on the CPU and never contends for the GPU queue radeonsi
+     * drives; that is what lets the two run in one title. A failure here is not fatal: present
+     * flushes and refuses the flip, exactly as it did before this existed.
+     */
+    gl->display = oops_display_open(OOPS_DISPLAY_BACKEND_AUTO, gl->width, gl->height);
+    if (gl->display != NULL && oops_display_is_ready(gl->display)) {
+        gl->scanbuf = (uint32_t *)malloc((size_t)gl->width * (size_t)gl->height * sizeof(uint32_t));
+        if (gl->scanbuf == NULL) {
+            oops_display_close(gl->display);
+            gl->display = NULL;
+            say("the scanout frame buffer would not allocate; present will flush but not flip");
+        }
+    } else {
+        if (gl->display != NULL) {
+            oops_display_close(gl->display);
+            gl->display = NULL;
+        }
+        say("the scanout output would not open; present will flush but not flip");
+    }
+
     return gl;
 }
 
@@ -388,27 +430,50 @@ bool oops_gl_present(struct oops_gl *gl)
     }
 
     /*
-     * The flush half is here and the flip half is not.
+     * The flush half, then the flip half.
      *
-     * `dri_flush_drawable` is the DRI2 flush extension: it finishes the current context's frame
-     * for this drawable through `st_context_flush`, the same call EGL's swap makes on an image
-     * loader. It is *not* `driSwapBuffers` - that is the swrast/kopper swap path and calls
-     * `drawable->swap_buffers`, a pointer only `drisw.c`/`kopper.c` ever set (dri_util.c:869). A
-     * radeonsi image loader leaves it null, so `driSwapBuffers` here jumped to a null pointer and
-     * faulted the moment a context existed to present (oops-mesa worklog 063).
+     * `dri_flush_drawable` is the DRI2 flush extension: it finishes the current context's frame for
+     * this drawable through `st_context_flush`, the same call EGL's swap makes on an image loader.
+     * It is *not* `driSwapBuffers` - that is the swrast/kopper swap path and calls
+     * `drawable->swap_buffers`, a pointer only `drisw.c`/`kopper.c` ever set, null for an image
+     * loader (oops-mesa worklog 063).
      *
-     * Putting the flushed buffer on the display is the other half, and it needs the buffer
-     * registered with the display controller first - `sceVideoOutRegisterBuffers2`, whose address
-     * constraint is the open unknown on roadmap unit 6 (D009), compounded by the render-target
-     * alignment question on the oops-sdk side. It cannot be asked until a surface exists to ask it
-     * about, which is what this title now creates.
+     * The flip half reads the finished frame back with `glReadPixels` - the one path that detiles
+     * radeonsi's colour buffer into a linear image - as 0xAARRGGBB words (`GL_BGRA` /
+     * `GL_UNSIGNED_BYTE` gives exactly that byte order, which is what the display and `CB_COLOR0`'s
+     * B8G8R8A8 scanout want), then hands it to `oops_display_present`, which tiles it onto the next
+     * scanout buffer and flips it. The display runs its CPU tiler, off the GPU queue radeonsi
+     * drives, so this does not contend with the driver.
      *
-     * So this returns false and says why, rather than returning true for a frame that is not on
-     * screen. A frame that did not retire is a failure, never a fallback (CLAUDE.md, principle 4).
+     * The readback is bottom-up (GL's origin is the lower-left) while the scanout is top-down, so
+     * the frame is mirrored vertically before it is presented.
      */
     dri_flush_drawable(gl->drawable);
-    say("the frame was flushed, but the flip path is not written yet, so it is not on screen");
-    return false;
+
+    if (gl->display == NULL || gl->scanbuf == NULL) {
+        say("the frame was flushed, but the scanout output is not open, so it is not on screen");
+        return false;
+    }
+
+    glReadPixels(0, 0, (GLsizei)gl->width, (GLsizei)gl->height, GL_BGRA, GL_UNSIGNED_BYTE,
+                 gl->scanbuf);
+
+    /* glReadPixels reads bottom-up (GL's origin is the lower-left) and the scanout is top-down, so
+     * mirror the frame vertically before presenting - swap row y with row (height-1-y), pixel by
+     * pixel so no full-row scratch buffer is needed. */
+    for (uint32_t y = 0; y < gl->height / 2u; y++) {
+        uint32_t *top = gl->scanbuf + (size_t)y * gl->width;
+        uint32_t *bot = gl->scanbuf + (size_t)(gl->height - 1u - y) * gl->width;
+        for (uint32_t x = 0; x < gl->width; x++) {
+            uint32_t tmp = top[x];
+            top[x] = bot[x];
+            bot[x] = tmp;
+        }
+    }
+
+    oops_display_present(gl->display, gl->scanbuf);
+    say("the frame was read back, flipped upright and presented to the display");
+    return true;
 }
 
 void oops_gl_destroy(struct oops_gl *gl)
@@ -417,6 +482,12 @@ void oops_gl_destroy(struct oops_gl *gl)
         return;
     }
     /* Reverse of the order they were made in, and each one tolerates never having been made. */
+    if (gl->scanbuf != NULL) {
+        free(gl->scanbuf);
+    }
+    if (gl->display != NULL) {
+        oops_display_close(gl->display);
+    }
     if (gl->back != NULL) {
         dri2_destroy_image(gl->back);
     }

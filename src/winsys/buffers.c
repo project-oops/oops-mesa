@@ -114,32 +114,6 @@ void oops_winsys_flush_cpu_writes(void)
 #endif
 }
 
-/*
- * DIAGNOSTIC (worklog 057): log the GPU address and first dwords of every buffer the GPU can read,
- * so a run says what is actually at the shader address the wavefronts fault on. Read from cpu_ptr - a
- * valid CPU mapping of the same physical pages the GPU fetches - so it is safe (no read of a raw GPU
- * VA). Recognisable RDNA2 words (s_endpgm 0xbf810000, scalar 0xbe../0xbf.., s_sendmsg 0xbf900009) mean
- * the code is present and valid; a repeating pattern or zeros mean it is stale/unmapped. Delete with
- * the bug.
- */
-void oops_winsys_dump_bos(void)
-{
-    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_BO; i++) {
-        struct oops_winsys_bo *bo = &s_bo[i];
-        /* Every CPU-mapped buffer, whether or not it has a GPU address yet, so the shader code is
-         * found wherever radeonsi actually wrote it. handle and phys included to correlate the CPU
-         * mapping with the GPU-VA mapping. */
-        if (!bo->live || !bo->cpu_ptr || bo->size < 32) {
-            continue;
-        }
-        const uint32_t *w = (const uint32_t *)bo->cpu_ptr;
-        oops_winsys_log("bo h%u va 0x%llx phys 0x%llx: %08x %08x %08x %08x %08x %08x %08x %08x",
-                        (unsigned)(i + 1), (unsigned long long)bo->gpu_va,
-                        (unsigned long long)bo->phys,
-                        w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
-    }
-}
-
 static uint64_t round_up_page(uint64_t n)
 {
     return (n + OOPS_WINSYS_PAGE - 1u) & ~(uint64_t)(OOPS_WINSYS_PAGE - 1u);
@@ -207,10 +181,6 @@ int oops_winsys_gem_create(union drm_amdgpu_gem_create *arg)
 
     memset(&arg->out, 0, sizeof(arg->out));
     arg->out.handle = handle;
-    /* DIAGNOSTIC (worklog 059): the bo lifecycle, to trace which handle/phys backs a VA over time -
-     * the identity/lifecycle question the shader-empty finding turned on (worklog 058). */
-    oops_winsys_log("CREATE h%u phys 0x%llx sz %llu", handle,
-                    (unsigned long long)phys, (unsigned long long)size);
     return 0;
 }
 
@@ -220,8 +190,6 @@ int oops_winsys_gem_close(uint32_t handle)
     if (!bo) {
         return -EINVAL;
     }
-    oops_winsys_log("CLOSE  h%u phys 0x%llx va 0x%llx", handle,
-                    (unsigned long long)bo->phys, (unsigned long long)bo->gpu_va);
     if (bo->cpu_ptr) {
         oops_mem_unmap(bo->cpu_ptr, (size_t)bo->size);
     }
@@ -269,8 +237,6 @@ void *oops_winsys_mmap(int fd, size_t length, uint64_t offset)
         }
         bo->cpu_ptr = v;
     }
-    oops_winsys_log("MMAP  h%u len %llu phys 0x%llx cpu %p", handle,
-                    (unsigned long long)length, (unsigned long long)bo->phys, bo->cpu_ptr);
     return bo->cpu_ptr;
 }
 
@@ -362,8 +328,6 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg)
             return -ENOMEM;
         }
         bo->gpu_va = arg->va_address;
-        oops_winsys_log("VA MAP h%u va 0x%llx phys 0x%llx", arg->handle,
-                        (unsigned long long)arg->va_address, (unsigned long long)bo->phys);
         return 0;
     }
     case AMDGPU_VA_OP_UNMAP:

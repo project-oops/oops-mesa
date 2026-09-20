@@ -63,49 +63,6 @@ static uint8_t s_agc_state[64]; /* the AGC runtime state sceAgcInit fills; kept 
 static uint32_t build_fence_stream(uint32_t *dw, uint64_t fence_gpu);
 static int submit_one(uint64_t va, uint32_t bytes);
 
-/*
- * DIAGNOSTIC (worklog 055): does the queue execute a stream at all?
- *
- * Submit the end-of-pipe fence stream alone, in oops_mem_alloc'd (proven, 0x2_xxxx) memory, and
- * see if it retires. This isolates the queue/submit path from radeonsi's command stream: if this
- * fires, the type-0 queue executes and any later non-retirement is the submitted work (an IB at an
- * address the command processor cannot fetch), not the queue. Instrument for the bug; delete with
- * the bug once the queue question is settled.
- */
-static void queue_self_test(void)
-{
-    uint64_t fence_gpu = (uint64_t)(uintptr_t)s_fence;
-    uint32_t words = build_fence_stream(s_fence_dcb, fence_gpu);
-    int fired = 0;
-
-    s_fence[0] = OOPS_WINSYS_FENCE_ARMED;
-#if defined(__x86_64__)
-    /* Write the armed word back now, so the poll's invalidating flush below cannot push this stale
-     * value out over the FIRED word the GPU is about to write. oops-gl flushes its fence the same
-     * way before submitting (gl_context.c). */
-    __builtin_ia32_clflush((const void *)s_fence);
-#endif
-    int rc = submit_one((uint64_t)(uintptr_t)s_fence_dcb, words * 4u);
-    if (rc == 0) {
-        for (int i = 0; i < OOPS_WINSYS_FENCE_POLLS; i++) {
-#if defined(__x86_64__)
-            __builtin_ia32_clflush((const void *)s_fence);
-#endif
-            if (s_fence[0] == OOPS_WINSYS_FENCE_FIRED) { fired = 1; break; }
-            if (sceKernelUsleep) { sceKernelUsleep(10); }
-        }
-    }
-    /* Split the failure: which submit call is bound, what it returned, and where the fence word
-     * ended. "submit_rc != 0" means the driver refused the stream; "rc 0 but fence unchanged"
-     * means it accepted it and the GPU did not run it. */
-    oops_winsys_log("queue self-test: q=%p scb=%d dcb=%d submit_rc=%d fence=0x%08x -> %s",
-                    s_queue,
-                    sceAgcDriverSubmitCommandBuffer ? 1 : 0,
-                    sceAgcDriverSubmitDcb ? 1 : 0,
-                    rc, (unsigned)s_fence[0],
-                    fired ? "RETIRED" : "no-retire");
-}
-
 static bool ensure_queue(void)
 {
     if (s_queue) {
@@ -152,7 +109,6 @@ static bool ensure_queue(void)
         oops_winsys_log("allocating the fence and its stream was refused");
         return false;
     }
-    queue_self_test();
     return true;
 }
 
@@ -252,7 +208,6 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
 #if defined(__x86_64__)
     __builtin_ia32_sfence();
 #endif
-    oops_winsys_dump_bos();   /* diagnostic (worklog 057): what the GPU is about to fetch */
 
     chunk_ptrs = (const uint64_t *)(uintptr_t)arg->in.chunks;
 
@@ -272,11 +227,6 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
             if (!ib || ib->ib_bytes == 0) {
                 break;
             }
-            /* Diagnostic: the VA radeonsi placed this IB at, so a run says whether it landed in
-             * the measured-accepted 0x2_xxxx window or the assumed high range - the fact that
-             * distinguishes "wrong address space" from "missing GPU state" (worklog 054). */
-            oops_winsys_log("submitting IB at gpu_va 0x%llx, %u bytes",
-                            (unsigned long long)ib->va_start, ib->ib_bytes);
             if (submit_one(ib->va_start, ib->ib_bytes) != 0) {
                 oops_winsys_log("the driver refused an instruction buffer of %u bytes",
                                 ib->ib_bytes);

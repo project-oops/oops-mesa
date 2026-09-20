@@ -86,9 +86,6 @@ uint64_t oops_winsys_bo_bytes_live(void);
  * sfence for the write-combined buffers. */
 void oops_winsys_flush_cpu_writes(void);
 
-/* Diagnostic: log each GPU-readable buffer's address and first dwords (worklog 057). */
-void oops_winsys_dump_bos(void);
-
 /* The CPU address of a range inside a live buffer, mapping it if it is not mapped yet. Returns
  * NULL for a dead handle or a range that does not fit. Submission uses it to land a sequence
  * number where an `AMDGPU_CHUNK_ID_FENCE` chunk asked for it. */
