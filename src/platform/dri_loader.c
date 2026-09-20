@@ -81,7 +81,7 @@ extern struct dri_context *driCreateNewContext(struct dri_screen *screen,
                                                struct dri_context *shared, void *data);
 extern bool dri_make_current(struct dri_context *ctx, struct dri_drawable *draw,
                              struct dri_drawable *read);
-extern void driSwapBuffers(struct dri_drawable *drawable);
+extern void dri_flush_drawable(struct dri_drawable *drawable);
 extern void driDestroyContext(struct dri_context *ctx);
 extern void driDestroyDrawable(struct dri_drawable *drawable);
 extern void driDestroyScreen(struct dri_screen *screen);
@@ -390,16 +390,23 @@ bool oops_gl_present(struct oops_gl *gl)
     /*
      * The flush half is here and the flip half is not.
      *
-     * `driSwapBuffers` makes the frontend finish the frame and hand this shim the buffer through
-     * `getBuffers`. Putting that buffer on the display is the other half, and it needs the buffer
-     * registered with the display controller first - which is `sceVideoOutRegisterBuffers2`, and
-     * whether that call constrains a buffer's address is the one open unknown on roadmap unit 6.
-     * It cannot be asked until a surface exists to ask it about.
+     * `dri_flush_drawable` is the DRI2 flush extension: it finishes the current context's frame
+     * for this drawable through `st_context_flush`, the same call EGL's swap makes on an image
+     * loader. It is *not* `driSwapBuffers` - that is the swrast/kopper swap path and calls
+     * `drawable->swap_buffers`, a pointer only `drisw.c`/`kopper.c` ever set (dri_util.c:869). A
+     * radeonsi image loader leaves it null, so `driSwapBuffers` here jumped to a null pointer and
+     * faulted the moment a context existed to present (oops-mesa worklog 063).
+     *
+     * Putting the flushed buffer on the display is the other half, and it needs the buffer
+     * registered with the display controller first - `sceVideoOutRegisterBuffers2`, whose address
+     * constraint is the open unknown on roadmap unit 6 (D009), compounded by the render-target
+     * alignment question on the oops-sdk side. It cannot be asked until a surface exists to ask it
+     * about, which is what this title now creates.
      *
      * So this returns false and says why, rather than returning true for a frame that is not on
      * screen. A frame that did not retire is a failure, never a fallback (CLAUDE.md, principle 4).
      */
-    driSwapBuffers(gl->drawable);
+    dri_flush_drawable(gl->drawable);
     say("the frame was flushed, but the flip path is not written yet, so it is not on screen");
     return false;
 }

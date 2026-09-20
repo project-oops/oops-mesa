@@ -1,0 +1,56 @@
+# 003-os-dupfd-passes-through-when-the-platform-cannot-dup.patch
+#
+# What it changes
+#   One function: `os_dupfd_cloexec` in `src/util/os_file.c`. When `fcntl(F_DUPFD)` fails with
+#   EINVAL - which on this platform it does for every descriptor, real files included - it returns
+#   the original fd unchanged instead of -1. Guarded by OOPS_MESA_WINSYS, so it is inert anywhere
+#   else.
+#
+# Why it could not be a shim
+#   `os_dupfd_cloexec` is Mesa's own util, compiled into libmesa_util and called from inside the
+#   DRI frontend; there is no seam a shim could sit on. The device fd it is asked to duplicate is
+#   oops-mesa's (a winsys singleton), but the duplication happens entirely within Mesa.
+#
+# Why it is needed - measured, not assumed
+#   The Gallium DRI frontend dups the device fd first thing (`pipe_loader_drm_probe_fd` ->
+#   `os_dupfd_cloexec`). On this platform that dup fails: `fcntl` is present (0x800000b50) but
+#   returns EINVAL for both F_DUPFD_CLOEXEC and F_DUPFD, even on a genuine open regular file
+#   (/app0/eboot.bin, fd 11) - so it is the command the kernel refuses, not a bad descriptor
+#   (oops-mesa worklog 049, three hardware runs). Without a working dup the frontend declined the
+#   screen before issuing a single ioctl, while `mesa-probe`'s direct `radeonsi_screen_create`
+#   path - which never dups - reached a screen fine.
+#
+#   `dup`/`dup2` are a different syscall that might work, but they are corpus-placed only and
+#   unmeasured on the native leg, and binding an unmeasured import is the GEN=4 trap obscene
+#   REQ-20260917T1818Z-9f41 warned against. Passing the fd through needs no dup primitive at all,
+#   and is correct here because oops-mesa's winsys device is a process-lifetime singleton whose
+#   `oops_winsys_close` is a no-op - the frontend and the shim share the one descriptor safely, and
+#   nothing in this configuration exercises the cross-process sharing paths where an independent
+#   dup would matter (DRM_CAP_PRIME is 0).
+#
+diff --git a/src/util/os_file.c b/src/util/os_file.c
+index 7d99383e..aa3c87b5 100644
+--- a/src/util/os_file.c
++++ b/src/util/os_file.c
+@@ -70,8 +70,20 @@ os_dupfd_cloexec(int fd)
+
+    newfd = fcntl(fd, F_DUPFD, minfd);
+
+-   if (newfd < 0)
++   if (newfd < 0) {
++#ifdef OOPS_MESA_WINSYS
++      /* This platform's fcntl rejects F_DUPFD and F_DUPFD_CLOEXEC with EINVAL even on a genuine
++       * open regular file - measured on hardware, oops-mesa worklog 049 - so there is no real
++       * duplicate to hand back. The only caller this matters for in an oops-mesa title is the DRI
++       * frontend duplicating the winsys device fd (pipe_loader_drm_probe_fd), and that fd is a
++       * process-lifetime singleton the shim never truly closes. Returning the same fd is therefore
++       * the correct dup where a real one is impossible, and the close-on-exec flag a real dup
++       * would carry is immaterial because a title never execs. */
++      if (errno == EINVAL)
++         return fd;
++#endif
+       return -1;
++   }
+
+    long flags = fcntl(newfd, F_GETFD);
+    if (flags == -1) {

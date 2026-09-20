@@ -10,8 +10,10 @@
  * frame and no reason for it (CLAUDE.md, principle 4).
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "drm-uapi/amdgpu_drm.h"
 #include "drm-uapi/drm.h"
@@ -218,6 +220,12 @@ static void test_the_first_question_libdrm_asks_is_answered(void)
 
     memset(&cap, 0, sizeof(cap));
     cap.capability = DRM_CAP_PRIME;
+    cap.value = 0xdeadbeef;
+    check(oops_winsys_get_cap(&cap) == 0, "PRIME is answered, not refused - D009 settled it");
+    check(cap.value == 0, "and says no cross-process buffer sharing exists here");
+
+    memset(&cap, 0, sizeof(cap));
+    cap.capability = 0xffff;   /* a capability this shim has no opinion on */
     check(oops_winsys_get_cap(&cap) == -EINVAL, "a capability nothing has decided is refused");
 }
 
@@ -434,6 +442,25 @@ static void test_a_buffer_through_its_whole_life(void)
     check(oops_winsys_gem_va(&va) == -ENOSYS,
           "a partial mapping is refused rather than quietly mapping the whole buffer");
 
+    /*
+     * Regression (worklog 053): the frontend never calls gem_va directly - it issues the ioctl,
+     * and libdrm encodes GEM_VA as _IOWR through drmCommandWriteRead, not the header's DRM_IOW. The
+     * dispatcher has to route that wire encoding, or every real VA map is refused as an unknown
+     * command and no context is ever made. Undo the map above through that encoding to prove it.
+     */
+    {
+        unsigned long iowr = DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_VA,
+                                      struct drm_amdgpu_gem_va);
+        int devfd = dup(2);   /* a real fd is served past the gate, as the dup-fd test establishes */
+        check(iowr != (unsigned long)DRM_IOCTL_AMDGPU_GEM_VA,
+              "libdrm's _IOWR wire encoding of GEM_VA is not the header's DRM_IOW macro");
+        va.offset_in_bo = 0;
+        va.operation = AMDGPU_VA_OP_UNMAP;
+        check(devfd >= 0 && oops_winsys_ioctl(devfd, iowr, &va) == 0,
+              "the _IOWR encoding libdrm actually sends is dispatched to gem_va, not refused");
+        if (devfd >= 0) close(devfd);
+    }
+
     memset(&w, 0, sizeof(w));
     w.in.handle = handle;
     check(oops_winsys_gem_wait_idle(&w) == 0, "whether the GPU has finished with it can be asked");
@@ -540,6 +567,41 @@ static void test_buffer_lists_check_their_handles(void)
     check(oops_winsys_bo_list(&l) == -EINVAL, "destroying a list that was never made is refused");
 }
 
+static void test_a_duplicated_device_fd_is_served(void)
+{
+    /*
+     * The DRI frontend dups the device fd before it uses it - `pipe_loader_drm_probe_fd` calls
+     * `os_dupfd_cloexec` first thing - so radeonsi's ioctls arrive on a descriptor other than the
+     * one `oops_winsys_open` returned. The gate has to serve that dup while still refusing a
+     * number that was never a descriptor.
+     *
+     * That distinction is the whole of the worklog 049 fix, and it cost a scarce hardware run to
+     * find (a synthetic token could not be dupped at all, so the frontend declined the screen
+     * before a single ioctl). It is checked here so it cannot silently regress: a real open fd
+     * standing in for the frontend's dup must get past the gate, and the same number once closed
+     * must be refused.
+     *
+     * An unknown command (`0xdeadbeef`) is used rather than a real one so the check exercises only
+     * the gate and the dispatcher's refusal, never a command handler that would reach for the
+     * vendor driver the host build does not have.
+     */
+    char arg[512];
+    int dupfd = dup(2);        /* a real, open descriptor - exactly how the target's open() gets one */
+
+    memset(arg, 0, sizeof(arg));
+    check(dupfd >= 0, "a descriptor can be duplicated on the host");
+    if (dupfd < 0) {
+        return;
+    }
+
+    check(oops_winsys_ioctl(dupfd, 0xdeadbeef, arg) == -EINVAL,
+          "an open duplicate of the device fd is served past the gate, not refused as a bad fd");
+
+    close(dupfd);
+    check(oops_winsys_ioctl(dupfd, 0xdeadbeef, arg) == -EBADF,
+          "once closed, that number is refused as a descriptor that was never opened");
+}
+
 int main(void)
 {
     printf("oops-mesa winsys host suite\n");
@@ -559,6 +621,7 @@ int main(void)
     test_measured_fields_match_their_records();
     test_memory_is_the_kernels_answer();
     test_unimplemented_commands_refuse();
+    test_a_duplicated_device_fd_is_served();
 
     printf("%d checks, %d failed\n", checks, failures);
     return failures ? 1 : 0;

@@ -48,22 +48,99 @@
 
 extern int sceKernelUsleep(unsigned int microseconds) __attribute__((weak));
 
+/* The proven submit entry point. oops-gl declares it the same way (oops-sdk gl_context.c) rather
+ * than through agc/driver.h, which only carries the queue-less SubmitDcb. It takes the queue the
+ * work goes on, which SubmitDcb does not - and the oracle fence
+ * (oops-sdk docs/hardware/agc-gl-cube-oracle-fw1240) retired on this call, not on SubmitDcb. */
+extern int sceAgcDriverSubmitCommandBuffer(void *queue, const void *dcb) __attribute__((weak));
+
 static void *s_queue;          /* the AGC queue, created on first use */
 static volatile uint32_t *s_fence;
 static uint32_t *s_fence_dcb;  /* the little stream that ends in the event */
 static uint64_t s_sequence;    /* what the last submission was called */
+static uint8_t s_agc_state[64]; /* the AGC runtime state sceAgcInit fills; kept for its lifetime */
+
+static uint32_t build_fence_stream(uint32_t *dw, uint64_t fence_gpu);
+static int submit_one(uint64_t va, uint32_t bytes);
+
+/*
+ * DIAGNOSTIC (worklog 055): does the queue execute a stream at all?
+ *
+ * Submit the end-of-pipe fence stream alone, in oops_mem_alloc'd (proven, 0x2_xxxx) memory, and
+ * see if it retires. This isolates the queue/submit path from radeonsi's command stream: if this
+ * fires, the type-0 queue executes and any later non-retirement is the submitted work (an IB at an
+ * address the command processor cannot fetch), not the queue. Instrument for the bug; delete with
+ * the bug once the queue question is settled.
+ */
+static void queue_self_test(void)
+{
+    uint64_t fence_gpu = (uint64_t)(uintptr_t)s_fence;
+    uint32_t words = build_fence_stream(s_fence_dcb, fence_gpu);
+    int fired = 0;
+
+    s_fence[0] = OOPS_WINSYS_FENCE_ARMED;
+#if defined(__x86_64__)
+    /* Write the armed word back now, so the poll's invalidating flush below cannot push this stale
+     * value out over the FIRED word the GPU is about to write. oops-gl flushes its fence the same
+     * way before submitting (gl_context.c). */
+    __builtin_ia32_clflush((const void *)s_fence);
+#endif
+    int rc = submit_one((uint64_t)(uintptr_t)s_fence_dcb, words * 4u);
+    if (rc == 0) {
+        for (int i = 0; i < OOPS_WINSYS_FENCE_POLLS; i++) {
+#if defined(__x86_64__)
+            __builtin_ia32_clflush((const void *)s_fence);
+#endif
+            if (s_fence[0] == OOPS_WINSYS_FENCE_FIRED) { fired = 1; break; }
+            if (sceKernelUsleep) { sceKernelUsleep(10); }
+        }
+    }
+    /* Split the failure: which submit call is bound, what it returned, and where the fence word
+     * ended. "submit_rc != 0" means the driver refused the stream; "rc 0 but fence unchanged"
+     * means it accepted it and the GPU did not run it. */
+    oops_winsys_log("queue self-test: q=%p scb=%d dcb=%d submit_rc=%d fence=0x%08x -> %s",
+                    s_queue,
+                    sceAgcDriverSubmitCommandBuffer ? 1 : 0,
+                    sceAgcDriverSubmitDcb ? 1 : 0,
+                    rc, (unsigned)s_fence[0],
+                    fired ? "RETIRED" : "no-retire");
+}
 
 static bool ensure_queue(void)
 {
     if (s_queue) {
         return true;
     }
-    if (!sceAgcDriverCreateQueue || !sceAgcDriverSubmitDcb) {
+    if (!sceAgcInit || !sceAgcDriverCreateQueue ||
+        (!sceAgcDriverSubmitCommandBuffer && !sceAgcDriverSubmitDcb)) {
         oops_winsys_log("the platform graphics driver is not bound; cannot submit");
         return false;
     }
-    /* Queue type 3 is the direct command queue, as oops-sdk's agc bindings record. */
-    if (sceAgcDriverCreateQueue(3, &s_queue, 0) != 0 || !s_queue) {
+
+    /* Initialise the AGC runtime before creating any queue. This is the step whose absence was the
+     * whole of worklog 055: without it the driver still accepts a CreateQueue and a submit (both
+     * return 0), but the command-processor microcode never services the queue, so the fence never
+     * retires. oops-sdk calls it before every queue it creates (agc_compute.c:30, agc_display.c:382)
+     * and obSCEne's 166-agc/init does the same; version 0xd into a zeroed state is the measured
+     * convention (oops-sdk agc/driver.h). The state is kept for the runtime's lifetime. */
+    for (size_t i = 0; i < sizeof(s_agc_state); i++) {
+        s_agc_state[i] = 0;
+    }
+    {
+        int arc = sceAgcInit(s_agc_state, 0xd);
+        if (arc != 0) {
+            oops_winsys_log("sceAgcInit refused (rc %d); the graphics runtime is not up", arc);
+            return false;
+        }
+    }
+
+    /* Queue type 0 is the universal graphics queue - the one oops-gl's proven flush creates
+     * (oops-sdk gl_context.c) and the one the oracle fence retired on. The earlier type 3 (the
+     * direct-command queue) was a mistake with a subtle cost: SubmitDcb takes no queue argument,
+     * so the type-3 queue was created and then never submitted to - the work went to whatever
+     * default context SubmitDcb uses, which is why even a fence stream in proven memory did not
+     * retire (worklog 054). Creating the graphics queue and submitting onto it is the fix. */
+    if (sceAgcDriverCreateQueue(0, &s_queue, 0) != 0 || !s_queue) {
         oops_winsys_log("creating the graphics queue was refused");
         s_queue = NULL;
         return false;
@@ -75,6 +152,7 @@ static bool ensure_queue(void)
         oops_winsys_log("allocating the fence and its stream was refused");
         return false;
     }
+    queue_self_test();
     return true;
 }
 
@@ -90,6 +168,17 @@ static uint32_t build_fence_stream(uint32_t *dw, uint64_t fence_gpu)
 {
     uint32_t *start = dw;
 
+    /* One register before the event, and it is not optional. A fresh graphics queue has no colour
+     * target, so the CACHE_FLUSH_AND_INV_TS below - which flushes the CB cache - has nothing valid
+     * to flush and the stream never retires (worklog 055). Setting CB_COLOR0_BASE to any mapped
+     * address gives it one; nothing reads this target. obSCEne's 166-agc/graphics-submit emits
+     * exactly this one SET_CONTEXT_REG before the same RELEASE_MEM and its fence retires on
+     * hardware, fence-val 0xbeefcafe (obscene src/probe/sections/agc.c:3932). The fence buffer's
+     * own address serves; oops_mem_alloc is 64 KiB-aligned so the >> 8 is exact. */
+    *dw++ = 0xc0012800u;                    /* SET_CONTEXT_REG, count 1 */
+    *dw++ = 0x200u;                         /* reg 0x200: CB_COLOR0_BASE */
+    *dw++ = (uint32_t)(fence_gpu >> 8);     /* a valid colour-buffer target */
+
     *dw++ = 0xc0064900u;                    /* RELEASE_MEM */
     *dw++ = 0x06603514u;                    /* CACHE_FLUSH_AND_INV_TS, write back through L2 */
     *dw++ = 0x20000000u;                    /* DATA_SEL 1: the 32-bit word below */
@@ -104,7 +193,20 @@ static uint32_t build_fence_stream(uint32_t *dw, uint64_t fence_gpu)
     for (int i = 0; i < 16; i++) {
         *dw++ = 0xffff1000u;
     }
-    return (uint32_t)(dw - start);
+
+    uint32_t words = (uint32_t)(dw - start);
+
+    /* Flush the stream to memory before the GPU fetches it. oops_mem_alloc hands back write-back
+     * memory, so these CPU stores sit in the cache until a flush writes them out; without it the
+     * command processor reads stale bytes and the stream never runs - which is exactly why a fence
+     * stream in proven memory did not retire (worklog 055). oops-gl's gl_hw_flush flushes its whole
+     * DCB for the same reason (gl_context.c). */
+#if defined(__x86_64__)
+    for (size_t p = 0; p < (size_t)words * sizeof(uint32_t); p += 64) {
+        __builtin_ia32_clflush((const void *)((const char *)start + p));
+    }
+#endif
+    return words;
 }
 
 static int submit_one(uint64_t va, uint32_t bytes)
@@ -117,6 +219,12 @@ static int submit_one(uint64_t va, uint32_t bytes)
     desc.flags = 0u;
     desc.pad = 0u;
 
+    /* Submit onto the queue this shim created, the way oops-gl's proven flush does. SubmitDcb is
+     * the fallback for a driver that does not export SubmitCommandBuffer; it submits to a default
+     * context rather than s_queue, so it is second choice, not first. */
+    if (sceAgcDriverSubmitCommandBuffer) {
+        return sceAgcDriverSubmitCommandBuffer(s_queue, &desc);
+    }
     return sceAgcDriverSubmitDcb(&desc);
 }
 
@@ -134,6 +242,17 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
     if (!arg->in.chunks || arg->in.num_chunks == 0) {
         return -EINVAL;
     }
+
+    /* Drain radeonsi's CPU writes - shaders, this IB, vertex and constant data - to memory before
+     * the command processor fetches any of it. radeonsi assumes the winsys does this and flushes
+     * nothing itself (worklog 057), so without it the GPU ran stale shader bytes and its wavefronts
+     * hit ILLEGAL_INST. clflush drains the write-back buffers; the sfence drains the write-combined
+     * ones, which is where shaders live. */
+    oops_winsys_flush_cpu_writes();
+#if defined(__x86_64__)
+    __builtin_ia32_sfence();
+#endif
+    oops_winsys_dump_bos();   /* diagnostic (worklog 057): what the GPU is about to fetch */
 
     chunk_ptrs = (const uint64_t *)(uintptr_t)arg->in.chunks;
 
@@ -153,6 +272,11 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
             if (!ib || ib->ib_bytes == 0) {
                 break;
             }
+            /* Diagnostic: the VA radeonsi placed this IB at, so a run says whether it landed in
+             * the measured-accepted 0x2_xxxx window or the assumed high range - the fact that
+             * distinguishes "wrong address space" from "missing GPU state" (worklog 054). */
+            oops_winsys_log("submitting IB at gpu_va 0x%llx, %u bytes",
+                            (unsigned long long)ib->va_start, ib->ib_bytes);
             if (submit_one(ib->va_start, ib->ib_bytes) != 0) {
                 oops_winsys_log("the driver refused an instruction buffer of %u bytes",
                                 ib->ib_bytes);
@@ -217,6 +341,12 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
         int fired = 0;
 
         s_fence[0] = OOPS_WINSYS_FENCE_ARMED;
+#if defined(__x86_64__)
+        /* Write the armed word back before submitting, so the poll's flush cannot clobber the
+         * GPU's FIRED write with this stale value (worklog 055). build_fence_stream flushes the
+         * stream itself. */
+        __builtin_ia32_clflush((const void *)s_fence);
+#endif
         words = build_fence_stream(s_fence_dcb, fence_gpu);
 
         if (submit_one((uint64_t)(uintptr_t)s_fence_dcb, words * 4u) != 0) {

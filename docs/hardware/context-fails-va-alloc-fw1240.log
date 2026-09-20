@@ -1,0 +1,117 @@
+[DRIP00001:DRI-PROBE] bringing GL up through the DRI frontend (v2026-09-19 15:54)
+[DRIP00001:OOPS-MESA] getenv: this platform exports none, so every name reads as unset. Mesa's debug switches are therefore all off. Said once, not per call.
+[DRIP00001:MESA] MESA-LOADER: failed to retrieve device information
+[DRIP00001:OOPS-MESA] ioctl #1 0xc0406400 answered 0
+[DRIP00001:OOPS-MESA] ioctl #2 0xc0406400 answered 0
+[DRIP00001:MESA] MESA-LOADER: failed to retrieve device information
+[DRIP00001:OOPS-MESA] ioctl #3 0xc0406400 answered 0
+[DRIP00001:OOPS-MESA] ioctl #4 0xc0406400 answered 0
+[DRIP00001:OOPS-MESA] ioctl #5 0xc0406400 answered 0
+[DRIP00001:OOPS-MESA] ioctl #6 0xc0406400 answered 0
+[DRIP00001:OOPS-MESA] devname_r was called; there is no device namespace to name from here.
+[DRIP00001:OOPS-MESA] ioctl #7 0xc0286405 answered 0
+[DRIP00001:OOPS-MESA] ioctl #8 0xc0406400 answered 0
+[DRIP00001:OOPS-MESA] ioctl #9 0xc0406400 answered 0
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 0 (0x0) asked
+[DRIP00001:OOPS-MESA] ioctl #10 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 22 (0x16) asked
+[DRIP00001:OOPS-MESA] device description: 6 of its groups are assumed, not measured; REQ-20260914T1558Z-7d41 is the request that would settle them
+[DRIP00001:OOPS-MESA] ioctl #11 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 21 (0x15) asked
+[DRIP00001:OOPS-MESA] GB_ADDR_CONFIG (0x263e) answered 0x00000004: derived by inverting addrlib against oops-sdk's tiler, not read from the register
+[DRIP00001:OOPS-MESA] ioctl #12 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 3 (0x3) asked
+[DRIP00001:OOPS-MESA] ioctl #13 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) asked
+[DRIP00001:OOPS-MESA] ioctl #14 0x80206445 answered 0
+[DRIP00001:MESA] /usr/share/libdrm/amdgpu.ids: No such file or directory
+[DRIP00001:MESA] No such file or directory
+[DRIP00001:OOPS-MESA] ioctl #15 0xc010640c answered 0
+[DRIP00001:OOPS-MESA] ioctl #16 0xc00864bf answered 0
+[DRIP00001:MESA] amdgpu: drmGetDevice2 failed.
+[DRIP00001:OOPS-MESA] device description: 6 of its groups are assumed, not measured; REQ-20260914T1558Z-7d41 is the request that would settle them
+[DRIP00001:OOPS-MESA] ioctl #17 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] GB_ADDR_CONFIG (0x263e) answered 0x00000004: derived by inverting addrlib against oops-sdk's tiler, not read from the register
+[DRIP00001:OOPS-MESA] ioctl #18 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] device description: 6 of its groups are assumed, not measured; REQ-20260914T1558Z-7d41 is the request that would settle them
+[DRIP00001:OOPS-MESA] ioctl #19 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] ioctl #20 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] ioctl #21 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] hardware IP type 1 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #22 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] hardware IP type 2 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #23 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] hardware IP type 3 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #24 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] hardware IP type 4 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #25 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] hardware IP type 5 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #26 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] hardware IP type 6 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #27 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] hardware IP type 7 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #28 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] hardware IP type 8 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #29 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] hardware IP type 9 is not present on this device
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+[DRIP00001:OOPS-MESA] ioctl #30 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 14 (0xe) asked
+[DRIP00001:OOPS-MESA] firmware version for type 0x4 is not measured; answering 0, which is the conservative side of every gate Mesa keys off it on this part
+[DRIP00001:OOPS-MESA] ioctl #31 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] firmware version for type 0x8 is not measured; answering 0, which is the conservative side of every gate Mesa keys off it on this part
+[DRIP00001:OOPS-MESA] ioctl #32 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] firmware version for type 0x5 is not measured; answering 0, which is the conservative side of every gate Mesa keys off it on this part
+[DRIP00001:OOPS-MESA] ioctl #33 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 25 (0x19) asked
+[DRIP00001:OOPS-MESA] memory description: 0x300000000 bytes from the kernel; the pool it bounds is assumed (REQ-20260915T0030Z-5d1c)
+[DRIP00001:OOPS-MESA] ioctl #34 0x80206445 answered 0
+[DRIP00001:OOPS-MESA] ioctl #35 0xc010640c answered 0
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 33 (0x21) asked
+[DRIP00001:OOPS-MESA] ioctl AMDGPU_INFO query 33 (0x21) is not implemented yet
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 33 (0x21) answered -78
+[DRIP00001:OOPS-MESA] ioctl #36 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] ioctl AMDGPU_INFO query 33 (0x21) is not implemented yet
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 33 (0x21) answered -78
+[DRIP00001:OOPS-MESA] ioctl #37 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 34 (0x22) asked
+[DRIP00001:OOPS-MESA] ioctl AMDGPU_INFO query 34 (0x22) is not implemented yet
+[DRIP00001:OOPS-MESA] AMDGPU_INFO query 34 (0x22) answered -78
+[DRIP00001:OOPS-MESA] ioctl #38 0x80206445 answered -78
+[DRIP00001:OOPS-MESA] ioctl #39 0xc010640c answered 0
+[DRIP00001:OOPS-MESA] sysconf(_SC_NPROCESSORS_ONLN): the affinity mask could not be read, so reporting the 14 obSCEne measured for a big-app container rather than failing into Mesa's one-thread fallback.
+[DRIP00001:OOPS-MESA] __xuname was called; this platform does not export it and the shim has no system name to give. Returning failure.
+[DRIP00001:OOPS-GL] 950 configs offered; one is 8888 double-buffered, depth 32
+[DRIP00001:OOPS-MESA] ioctl #40 0xc0106442 answered 0
+[DRIP00001:OOPS-MESA] ioctl #41 0xc0206440 answered 0
+[DRIP00001:OOPS-MESA] ioctl #42 0xc0086441 answered 0
+[DRIP00001:OOPS-MESA] ioctl #43 0xc0206440 answered 0
+[DRIP00001:MESA] MESA: error: amdgpu: failed to allocate 2097152 bytes from the 64-bit address space
+[DRIP00001:OOPS-MESA] ioctl #44 0x80086409 answered 0
+[DRIP00001:OOPS-MESA] ioctl #45 0xc0206440 answered 0
+[DRIP00001:MESA] MESA: error: amdgpu: failed to allocate 2097152 bytes from the 64-bit address space
+[DRIP00001:OOPS-MESA] ioctl #46 0x80086409 answered 0
+[DRIP00001:OOPS-MESA] ioctl #47 0xc0206440 answered 0
+[DRIP00001:MESA] MESA: error: amdgpu: failed to allocate 2097152 bytes from the 64-bit address space
+[DRIP00001:OOPS-MESA] ioctl #48 0x80086409 answered 0
+[DRIP00001:OOPS-MESA] ioctl #49 0xc0206440 answered 0
+[DRIP00001:MESA] MESA: error: amdgpu: failed to allocate 2097152 bytes from the 64-bit address space
+[DRIP00001:OOPS-MESA] ioctl #50 0x80086409 answered 0
+[DRIP00001:MESA] MESA: error: amdgpu: failed to create IB buffer: size=32768
+[DRIP00001:MESA] radeonsi: error: can't create gfx_cs
+[DRIP00001:MESA] radeonsi: error: Failed to create a context.
+[DRIP00001:OOPS-MESA] ioctl #51 0x80086409 answered 0
+[DRIP00001:OOPS-MESA] ioctl #52 0xc0106442 answered 0
+[DRIP00001:OOPS-GL] the GL context would not be created
+[DRIP00001:OOPS-MESA] ioctl #53 0xc00864c0 answered 0
+[DRIP00001:DRI-PROBE] GL did not come up; the shim's last line above names the step
+[DRIP00001:DRI-PROBE] done
+[DRIP00001:DRI-PROBE] idle and finished - close this title from the host

@@ -67,11 +67,30 @@ unsigned oops_winsys_device_info(struct drm_amdgpu_info_device *out)
      * What is left is a public source for this exact part (hw.model may be the lead) or deriving
      * the counts from observed surface behaviour. Until then these carry 7d41's identifier. */
 
-    /* Every GPU mapping oops-gl has made sits at 0x2_0000_0000, which is the only part of the
-     * address space this collection has seen the driver hand out. The extent above it is a
-     * guess at a range, not a measurement of one. */
-    out->virtual_address_offset = 0x0000000200000000ull;
-    out->virtual_address_max    = 0x0000040000000000ull;
+    /* The GPU virtual-address ranges radeonsi allocates from. Every GPU mapping oops-gl has made
+     * sits at 0x2_0000_0000, and it is the only address this collection has measured the platform
+     * accept (oops-sdk docs/hardware/agc-gl-cube-oracle-fw1240, orbistoun worklog 539). That one
+     * fact anchors both ranges near that base; their extents are assumed and are the subject of
+     * REQ-20260919T1708Z-5af3.
+     *
+     * radeonsi asks libdrm for every renderbuffer's VA with AMDGPU_VA_RANGE_HIGH set
+     * unconditionally (mesa/src/gallium/winsys/amdgpu/drm/amdgpu_bo.c:690 at the pin), so the high
+     * range is where essentially every allocation lands - including the command buffer (IB) built
+     * during context creation. It is therefore placed just above the measured-mappable base, as
+     * close to it as an ordered layout allows, so those allocations get an address near the one the
+     * platform is known to bind: the winsys binds each buffer at exactly the VA libdrm picks
+     * (buffers.c), so an unmappable range fails the map rather than merely mislabelling it. The
+     * general range - which radeonsi reaches only for its rare non-HIGH allocations - keeps the
+     * proven base itself and is shrunk so the two are disjoint and numerically ordered the way real
+     * amdgpu reports them (low range below high range).
+     *
+     * Leaving high_va at 0/0 - as this file did through worklog 026, when nothing had yet created a
+     * context - left that manager empty and made the first IB allocation fail outright, which is the
+     * wall captured in docs/hardware/context-fails-va-alloc-fw1240.log. */
+    out->virtual_address_offset = 0x0000000200000000ull;  /* general: the proven base */
+    out->virtual_address_max    = 0x0000000400000000ull;   /* shrunk so high can sit disjoint above */
+    out->high_va_offset         = 0x0000000400000000ull;   /* high: just above the base; radeonsi lands here */
+    out->high_va_max            = 0x0000002400000000ull;
     assumed++;
 
     /* The Navi 10 shape the family shares. oops-gl programs CU_EN masks of 0xffff and a
@@ -158,9 +177,10 @@ unsigned oops_winsys_device_info(struct drm_amdgpu_info_device *out)
      *   device_id        gives pci_id = 0, which reaches `caps->device_id`. No PCI identifier
      *                    for this part has been measured, so zero is the honest answer rather
      *                    than a missing one.
-     *   high_va_offset,  leave the VA manager's high range empty, so
-     *   high_va_max      `amdgpu_query_sw_info(address32_hi)` answers from the 32-bit range.
-     *                    Deliberate: nothing here hands out a high virtual address.
+     *
+     * (high_va_offset / high_va_max were once here, left zero on the reasoning that nothing handed
+     * out a high virtual address. Context creation now does - radeonsi requests AMDGPU_VA_RANGE_HIGH
+     * for the command buffer - so they carry an assumed range above, not a deliberate zero.)
      *
      * None of these is counted as assumed. An assumed field is one where a value was chosen and
      * could be wrong; these are fields where zero is what this shim means. */

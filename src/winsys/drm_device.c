@@ -26,8 +26,18 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
+
+/* The target sysroot exposes `F_DUPFD_CLOEXEC` directly; the host test compiles this file against
+ * glibc, which gates it behind a feature macro. The close-on-exec flag is immaterial here - a
+ * title never execs a child - so where the constant is absent, plain `F_DUPFD` is identical for
+ * this shim's purpose. The fallback only ever applies to the host build; the shipped target binary
+ * uses the real one. */
+#ifndef F_DUPFD_CLOEXEC
+#define F_DUPFD_CLOEXEC F_DUPFD
+#endif
 
 #include "drm-uapi/amdgpu_drm.h"
 #include "drm-uapi/drm.h"
@@ -38,8 +48,25 @@
 #include "oops_winsys.h"
 
 /* The one device this shim serves. libdrm opens a node and keeps the descriptor; nothing here
- * needs a file system, so the descriptor is a token rather than an index into one. */
+ * needs a file system, so historically the descriptor was a fixed token rather than an index
+ * into one.
+ *
+ * That was enough while the only caller was a title calling `radeonsi_screen_create` directly
+ * (mesa-probe): the token flowed straight to the ioctl path, every ioctl is patched to
+ * `oops_winsys_ioctl`, and the gate below accepted the token. It stopped being enough the moment
+ * a title went through the Gallium DRI frontend instead (dri-probe): `pipe_loader_drm_probe_fd`
+ * **dups the descriptor** with `os_dupfd_cloexec` before it does anything else, and
+ * `fcntl(0x57, F_DUPFD_CLOEXEC)` on a number the kernel never handed out fails - so the probe
+ * returned false before a single ioctl, and `driCreateNewScreen3` returned NULL. Measured on
+ * hardware 2026-09-19: `getenv` ran, then "the DRI frontend would not create a screen", with no
+ * ioctl trace at all (worklog 049).
+ *
+ * So the descriptor now has to be a real, dup-able fd. `OOPS_WINSYS_FD` remains only as the
+ * fallback for when a real one cannot be obtained, which keeps mesa-probe's path working
+ * unchanged. `s_winsys_fd` holds whichever it turned out to be. */
 #define OOPS_WINSYS_FD 0x0057
+
+static int s_winsys_fd = OOPS_WINSYS_FD;
 
 /* GB_ADDR_CONFIG (dword 0x263e), derived rather than read.
  *
@@ -375,25 +402,41 @@ int oops_winsys_ioctl(int fd, unsigned long request, void *arg)
     unsigned n = ++s_seq;
     int r;
 
-    if (fd != OOPS_WINSYS_FD) {
+    if (fd != s_winsys_fd) {
         /*
-         * The winsys hands out exactly one descriptor, so a call on any other one cannot be
-         * served. Saying so matters: if Mesa ever duplicates the descriptor - and a loader that
-         * takes ownership of a device fd is entitled to - then every call after that point
-         * arrives here and fails, and a silent -EBADF makes that look like the driver simply
-         * stopped asking for things.
+         * A descriptor other than the one this shim handed out. The earlier version refused any
+         * such call with -EBADF, on the reasoning that the winsys serves exactly one device - but
+         * it also predicted the case that makes a blanket refusal wrong, in as many words: "if
+         * Mesa ever duplicates the descriptor - and a loader that takes ownership of a device fd
+         * is entitled to - then every call after that point arrives here and fails."
          *
-         * One line per descriptor rather than per call, because a refused fd tends to be refused
-         * in a loop.
+         * That is now the measured, legitimate case: the DRI frontend dups the device fd
+         * (`pipe_loader_drm_probe_fd`) and radeonsi issues its ioctls on the dup, so refusing it
+         * turns a working driver into a silent -EBADF wall (the dri-probe failure this fixes).
+         *
+         * But "serve any fd" over-corrects and loses a real safety property the host suite
+         * encodes: a command on a descriptor that was never opened should still be refused. The
+         * two are distinguishable without tracking dups - **a dup is a real, open descriptor and a
+         * never-opened number is not**, which `fcntl(fd, F_GETFD)` reports. So a valid open fd is
+         * served as the dup it is, and a bogus one is still refused.
          */
-        static int s_complained = -1;
-
-        if (fd != s_complained) {
-            s_complained = fd;
-            oops_winsys_log("ioctl on fd %d, but this winsys only serves fd %d; refusing",
-                            fd, OOPS_WINSYS_FD);
+        if (fcntl(fd, F_GETFD) == -1) {
+            static int s_complained = -1;
+            if (fd != s_complained) {
+                s_complained = fd;
+                oops_winsys_log("ioctl on fd %d, which is not open and is not the winsys device "
+                                "fd %d; refusing", fd, s_winsys_fd);
+            }
+            return -EBADF;
         }
-        return -EBADF;
+
+        static int s_noted = -1;
+        if (fd != s_noted) {
+            s_noted = fd;
+            oops_winsys_log("ioctl on fd %d, an open duplicate of the winsys device fd %d; "
+                            "serving it (the frontend is entitled to dup the device)",
+                            fd, s_winsys_fd);
+        }
     }
     r = ioctl_dispatch(request, arg);
 
@@ -423,7 +466,16 @@ static int ioctl_dispatch(unsigned long request, void *arg)
     case DRM_IOCTL_AMDGPU_INFO:          return oops_winsys_info((struct drm_amdgpu_info *)arg);
     case DRM_IOCTL_AMDGPU_GEM_CREATE:    return oops_winsys_gem_create((union drm_amdgpu_gem_create *)arg);
     case DRM_IOCTL_AMDGPU_GEM_MMAP:      return oops_winsys_gem_mmap((union drm_amdgpu_gem_mmap *)arg);
-    case DRM_IOCTL_AMDGPU_GEM_VA:        return oops_winsys_gem_va((struct drm_amdgpu_gem_va *)arg);
+    /* GEM_VA arrives in two encodings, and only one is the header's. libdrm issues it through
+     * drmCommandWriteRead (mesa/subprojects/libdrm-2.4.133/amdgpu/amdgpu_bo.c:794,830 at the pin),
+     * which builds the request as _IOWR from the struct size - so the value that reaches here is
+     * the read/write form (0xc0406448), while the header's DRM_IOCTL_AMDGPU_GEM_VA macro is
+     * DRM_IOW (0x40406448) and the plain case would miss every real call. Match both. This is the
+     * "one ioctl, two encodings" shape worklog 038 named; GEM_VA is where it bites because its
+     * header macro alone in this family declares write-only while the struct now carries a return. */
+    case DRM_IOCTL_AMDGPU_GEM_VA:
+    case DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_VA, struct drm_amdgpu_gem_va):
+        return oops_winsys_gem_va((struct drm_amdgpu_gem_va *)arg);
     case DRM_IOCTL_AMDGPU_CS:            return oops_winsys_cs((union drm_amdgpu_cs *)arg);
     case DRM_IOCTL_AMDGPU_WAIT_CS:       return oops_winsys_wait_cs((union drm_amdgpu_wait_cs *)arg);
 
@@ -630,10 +682,59 @@ int oops_winsys_open(void)
         oops_winsys_log("the platform graphics driver is not bound; nothing to open");
         return -ENODEV;
     }
-    return OOPS_WINSYS_FD;
+
+    /*
+     * A real, dup-able descriptor, because the DRI frontend dups it (see the note on
+     * `OOPS_WINSYS_FD`). It is obtained by duplicating an already-open standard descriptor rather
+     * than by opening a path: stderr is open on every leg - the same programme of sweeps that
+     * found stdout/stderr go nowhere also found them open (`REQ-20260917T0233Z-5c9d`) - and
+     * duplicating an open fd is a kernel primitive that needs no filesystem the sandbox might not
+     * have. `fcntl(F_DUPFD_CLOEXEC)` is exactly what `os_dupfd_cloexec` will call on the result,
+     * so if this succeeds the frontend's dup will too.
+     *
+     * The fd's *identity* is all that is used. `oops_winsys_mmap` ignores it (`(void)fd`), the
+     * ioctl path is patched to this shim regardless of it, and nothing here reads, writes or maps
+     * it - so the fact it aliases stderr's sink is immaterial; only `ioctl`, which never reaches
+     * the kernel for it, is ever issued.
+     *
+     * On failure it falls back to the token, which is what mesa-probe has always used and which
+     * still works for a title that does not go through the frontend.
+     */
+    /*
+     * A real, open descriptor rather than a bare token. It cannot be *dupped* - measured on
+     * hardware, `fcntl(F_DUPFD)` and `F_DUPFD_CLOEXEC` both return EINVAL even on a genuine open
+     * regular file, so this platform simply does not implement fcntl-based duplication (worklog
+     * 049). The DRI frontend dups the device fd through `os_dupfd_cloexec`, which patch 003 makes
+     * pass the fd through unchanged on exactly that EINVAL - so the descriptor the frontend then
+     * uses is this same one, and it must be a real fd, because the frontend and libdrm's device
+     * probing do incidental non-ioctl things to it (`fstat`, `/proc`-style lookups) that a token
+     * would `EBADF`. The title's own eboot is always present and openable (measured: fd came back
+     * with errno 0), and nothing here ever reads, writes or mmaps it - `oops_winsys_mmap` ignores
+     * the fd - so its being the eboot file is immaterial; only its identity is used, for the gate.
+     *
+     * Falls back to the token if the open ever fails, which keeps a direct-radeonsi title
+     * (mesa-probe) working - that path never dups and never touches the fd but through ioctl.
+     */
+    int f = open("/app0/eboot.bin", O_RDONLY);
+    if (f >= 0) {
+        s_winsys_fd = f;
+    } else {
+        s_winsys_fd = OOPS_WINSYS_FD;
+        oops_winsys_log("could not open a real descriptor for the device (errno %d); using the "
+                        "token 0x%x, which serves a direct-radeonsi title but not the DRI frontend",
+                        errno, OOPS_WINSYS_FD);
+    }
+    return s_winsys_fd;
 }
 
 int oops_winsys_close(int fd)
 {
-    return fd == OOPS_WINSYS_FD ? 0 : -EBADF;
+    /* The device fd or an open dup of it, by the same test the ioctl gate uses: a real open
+     * descriptor is accepted, a never-opened one is refused. Nothing is actually closed - a real
+     * fd handed out by `oops_winsys_open` is left for the platform to reclaim at process teardown,
+     * which does not happen because a title parks rather than exits. */
+    if (fd == s_winsys_fd || fcntl(fd, F_GETFD) != -1) {
+        return 0;
+    }
+    return -EBADF;
 }

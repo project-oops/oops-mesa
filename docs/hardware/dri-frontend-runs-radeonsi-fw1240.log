@@ -1,0 +1,123 @@
+DRI-PROBE] bringing GL up through the DRI frontend (v2026-09-19 13:26)
+OOPS-MESA] getenv: this platform exports none, so every name reads as unset. Mesa's debug switches are therefore all off. Said once, not per call.
+OOPS-MESA] ioctl #1 0xc0406400 answered 0
+OOPS-MESA] ioctl #2 0xc0406400 answered 0
+OOPS-MESA] ioctl #3 0xc0406400 answered 0
+OOPS-MESA] ioctl #4 0xc0406400 answered 0
+OOPS-MESA] ioctl #5 0xc0406400 answered 0
+OOPS-MESA] ioctl #6 0xc0406400 answered 0
+OOPS-MESA] devname_r was called; there is no device namespace to name from here.
+OOPS-MESA] ioctl #7 0xc0286405 answered 0
+OOPS-MESA] ioctl #8 0xc0406400 answered 0
+OOPS-MESA] ioctl #9 0xc0406400 answered 0
+OOPS-MESA] AMDGPU_INFO query 0 (0x0) asked
+OOPS-MESA] ioctl #10 0x80206445 answered 0
+OOPS-MESA] AMDGPU_INFO query 22 (0x16) asked
+OOPS-MESA] device description: 6 of its groups are assumed, not measured; REQ-20260914T1558Z-7d41 is the request that would settle them
+OOPS-MESA] ioctl #11 0x80206445 answered 0
+OOPS-MESA] AMDGPU_INFO query 21 (0x15) asked
+OOPS-MESA] GB_ADDR_CONFIG (0x263e) answered 0x00000004: derived by inverting addrlib against oops-sdk's tiler, not read from the register
+OOPS-MESA] ioctl #12 0x80206445 answered 0
+OOPS-MESA] AMDGPU_INFO query 3 (0x3) asked
+OOPS-MESA] ioctl #13 0x80206445 answered 0
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) asked
+OOPS-MESA] ioctl #14 0x80206445 answered 0
+OOPS-MESA] ioctl #15 0xc010640c answered 0
+OOPS-MESA] ioctl #16 0xc00864bf answered 0
+OOPS-MESA] device description: 6 of its groups are assumed, not measured; REQ-20260914T1558Z-7d41 is the request that would settle them
+OOPS-MESA] ioctl #17 0x80206445 answered 0
+OOPS-MESA] GB_ADDR_CONFIG (0x263e) answered 0x00000004: derived by inverting addrlib against oops-sdk's tiler, not read from the register
+OOPS-MESA] ioctl #18 0x80206445 answered 0
+OOPS-MESA] device description: 6 of its groups are assumed, not measured; REQ-20260914T1558Z-7d41 is the request that would settle them
+OOPS-MESA] ioctl #19 0x80206445 answered 0
+OOPS-MESA] ioctl #20 0x80206445 answered 0
+OOPS-MESA] ioctl #21 0x80206445 answered 0
+OOPS-MESA] hardware IP type 1 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #22 0x80206445 answered -78
+OOPS-MESA] hardware IP type 2 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #23 0x80206445 answered -78
+OOPS-MESA] hardware IP type 3 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #24 0x80206445 answered -78
+OOPS-MESA] hardware IP type 4 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #25 0x80206445 answered -78
+OOPS-MESA] hardware IP type 5 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #26 0x80206445 answered -78
+OOPS-MESA] hardware IP type 6 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #27 0x80206445 answered -78
+OOPS-MESA] hardware IP type 7 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #28 0x80206445 answered -78
+OOPS-MESA] hardware IP type 8 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #29 0x80206445 answered -78
+OOPS-MESA] hardware IP type 9 is not present on this device
+OOPS-MESA] AMDGPU_INFO query 2 (0x2) answered -78
+OOPS-MESA] ioctl #30 0x80206445 answered -78
+OOPS-MESA] AMDGPU_INFO query 14 (0xe) asked
+OOPS-MESA] firmware version for type 0x4 is not measured; answering 0, which is the conservative side of every gate Mesa keys off it on this part
+OOPS-MESA] ioctl #31 0x80206445 answered 0
+OOPS-MESA] firmware version for type 0x8 is not measured; answering 0, which is the conservative side of every gate Mesa keys off it on this part
+OOPS-MESA] ioctl #32 0x80206445 answered 0
+OOPS-MESA] firmware version for type 0x5 is not measured; answering 0, which is the conservative side of every gate Mesa keys off it on this part
+OOPS-MESA] ioctl #33 0x80206445 answered 0
+OOPS-MESA] AMDGPU_INFO query 25 (0x19) asked
+OOPS-MESA] memory description: 0x300000000 bytes from the kernel; the pool it bounds is assumed (REQ-20260915T0030Z-5d1c)
+OOPS-MESA] ioctl #34 0x80206445 answered 0
+OOPS-MESA] ioctl #35 0xc010640c answered 0
+OOPS-MESA] AMDGPU_INFO query 33 (0x21) asked
+OOPS-MESA] ioctl AMDGPU_INFO query 33 (0x21) is not implemented yet
+OOPS-MESA] AMDGPU_INFO query 33 (0x21) answered -78
+OOPS-MESA] ioctl #36 0x80206445 answered -78
+OOPS-MESA] ioctl AMDGPU_INFO query 33 (0x21) is not implemented yet
+OOPS-MESA] AMDGPU_INFO query 33 (0x21) answered -78
+OOPS-MESA] ioctl #37 0x80206445 answered -78
+OOPS-MESA] AMDGPU_INFO query 34 (0x22) asked
+OOPS-MESA] ioctl AMDGPU_INFO query 34 (0x22) is not implemented yet
+OOPS-MESA] AMDGPU_INFO query 34 (0x22) answered -78
+OOPS-MESA] ioctl #38 0x80206445 answered -78
+OOPS-MESA] ioctl #39 0xc010640c answered 0
+OOPS-MESA] sysconf(_SC_NPROCESSORS_ONLN): the affinity mask could not be read, so reporting the 14 obSCEne measured for a big-app container rather than failing into Mesa's one-thread fallback.
+OOPS-MESA] __xuname was called; this platform does not export it and the shim has no system name to give. Returning failure.
+
+---- fatal signal (from the same capture) ----
+# A user thread receives a fatal signal
+#
+# signal: 11 (SIGSEGV)
+# thread ID: 101478
+# thread name: eboot.bin
+# proc ID: 432
+# proc name: eboot.bin
+# reason: page fault (user write data, page not present)
+# fault address: 0000000000000000
+#
+# registers:
+# rax: 0000000000000000  rbx: 000000088000a340
+# rcx: 0000000080020000  rdx: 0000000000000000
+# rsi: 0000000000000000  rdi: 000000080025fe10
+# rbp: 00000007eeffb3c0  rsp: 00000007eeffb320
+# r8 : 000000080025fa98  r9 : 0000000000001ac0
+# r10: ff00fffffffffff8  r11: 000000080025fa98
+# r12: 0000000880022380  r13: 0000000000000000
+# r14: 000000088003c280  r15: 000000088003b7c0
+# rip: 00000000010a0bf0  eflags: 00010246
+# lbf: ffffffffffffffff  lbt: ffffffffffffffff
+# lb0: ffffffffffffffff  lb1: ffffffffffffffff
+# lb2: ffffffffffffffff  lb3: ffffffffffffffff
+# lb4: ffffffffffffffff  lb5: ffffffffffffffff
+# lb6: ffffffffffffffff  lb7: ffffffffffffffff
+#
+# backtrace:
+copyin: eboot.bin has nonsleeping lock
+# 0000000001099e50
+# 0000000001099617
+# 000000000108ad83
+# 0000000000000000
+#
+# dynamic libraries:
+# /app0/eboot.bin

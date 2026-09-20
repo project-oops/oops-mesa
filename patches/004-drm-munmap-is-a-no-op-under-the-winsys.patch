@@ -1,0 +1,35 @@
+# 004: drm_munmap is a no-op under the winsys - the other half of patch 001's drm_mmap redirect.
+#
+# Patch 001 redirected libdrm's drm_mmap to the shim but left drm_munmap calling the real munmap,
+# which frees the CPU virtual address. radeonsi maps and unmaps buffers repeatedly (its shader
+# upload uses RADEON_MAP_TEMPORARY: map, memcpy, unmap), so the unmap freed the address and the
+# platform re-handed it to the next buffer's map - two buffers collided on one CPU address, and the
+# shader's write landed in the wrong buffer's physical pages. The shader buffer the GPU executes
+# then held only its allocation-time contents and the wavefronts faulted ILLEGAL_INST
+# (oops-mesa worklog 059). A buffer's CPU mapping belongs to the bo for its lifetime and is released
+# only at GEM_CLOSE (oops_winsys_gem_close -> oops_mem_unmap), so unmapping here is a no-op. The
+# shim's own oops_winsys_munmap is already a no-op for the same reason; this closes the one libdrm
+# macro that bypassed it. It could not be a shim: drm_munmap is libdrm's own inline macro.
+--- a/subprojects/libdrm-2.4.133/libdrm_macros.h
++++ b/subprojects/libdrm-2.4.133/libdrm_macros.h
+@@ -89,7 +89,19 @@ static inline int drm_munmap(void *addr, size_t length)
+                  LARGE_OFF_T % 2147483647 == 1);
+ #undef LARGE_OFF_T
+
+-   return munmap(addr, length);
++#ifdef OOPS_MESA_WINSYS
++   /* No-op, and it is the other half of the drm_mmap redirect above. The shim owns a buffer's CPU
++    * mapping for the bo's lifetime and releases it only at GEM_CLOSE. radeonsi maps and unmaps
++    * buffers repeatedly (the RADEON_MAP_TEMPORARY shader upload does), and a real unmap here frees
++    * the virtual address; the platform then re-hands that same address to the next buffer, two bos
++    * collide on one CPU address, and a write to one lands in the other's pages - which is exactly
++    * what left the shader buffer empty and faulted the wavefronts (oops-mesa worklog 059). */
++   (void)addr;
++   (void)length;
++   return 0;
++#else
++   return munmap(addr, length);
++#endif
+ }
+ #endif
+

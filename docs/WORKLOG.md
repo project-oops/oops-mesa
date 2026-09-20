@@ -60,3 +60,18 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [046. The tool that says what is left was under-reporting it](worklog/046-the-tool-that-says-what-is-left-was-under-reporting.md) |
 | - | [047. Every import is now a measurement](worklog/047-every-import-is-now-a-measurement.md) |
 | - | [048. The full stack ran, and the parking ending met its catch](worklog/048-the-full-stack-ran-and-the-parking-ending-met-its-catch.md) |
+| - | [049. The DRI frontend dups the device fd, and a token could not be dupped](worklog/049-the-dri-frontend-dups-the-device-fd-and-the-token-could-not-be-dupped.md) |
+| - | [050. Patch 003 works: the frontend runs radeonsi, crashes in config enumeration](worklog/050-patch-003-works-the-frontend-runs-radeonsi-and-crashes-in-config-enumeration.md) |
+| - | [051. The heap fix lands, and a diagnostic that outlived its use](worklog/051-the-heap-fix-lands-and-the-diagnostic-that-outlived-its-use.md) |
+| - | [052. Config enumeration passes on the heap fix; the next wall is an empty high VA range](worklog/052-config-enumeration-passes-and-the-next-wall-is-an-empty-high-va-range.md) |
+| - | [053. The high VA unblocked the allocation, and uncovered a GEM_VA encoding the dispatch missed](worklog/053-the-high-va-unblocked-the-alloc-and-uncovered-a-gem-va-encoding-the-dispatch-missed.md) |
+| - | [054. The VA maps land, the first submission is reached, and it does not retire](worklog/054-the-va-maps-land-the-first-submission-is-reached-and-it-does-not-retire.md) |
+| - | [055. The submit path is fixed to the proven recipe, and the fence still will not retire](worklog/055-the-submit-path-is-fixed-to-the-proven-recipe-and-the-fence-still-will-not-retire.md) |
+| - | [056. The missing step was sceAgcInit: the queue executes, and radeonsi's shaders launch](worklog/056-the-missing-step-was-sceagcinit-the-queue-executes-and-radeonsis-shaders-launch.md) |
+| - | [057. The shader ILLEGAL_INST is not CPU-write staleness](worklog/057-the-shader-illegal-inst-is-not-cpu-write-staleness.md) |
+| - | [058. The shader code is in no buffer: the upload does not land](worklog/058-the-shader-code-is-in-no-buffer-the-upload-does-not-land.md) |
+| - | [059. Two buffers, one CPU address: the shader upload was overwritten](worklog/059-two-buffers-one-cpu-address-the-shader-upload-was-overwritten.md) |
+| - | [060. The shader uploads and runs; the next wall is an illegal instruction](worklog/060-the-shader-uploads-and-runs-the-next-wall-is-an-illegal-instruction.md) |
+| - | [061. The shader ILLEGAL_INST is a wrong-ISA-generation shader (gfx11 on gfx10 silicon)](worklog/061-the-shader-is-gfx11-isa-on-gfx10-silicon.md) |
+| - | [062. The shader ILLEGAL_INST was a zeroed opcode table: .init_array was never run](worklog/062-init-array-was-never-run-so-acos-opcode-table-was-zero.md) |
+| - | [063. Presentation called the swrast swap, which is null for an image loader](worklog/063-present-called-the-swrast-swap-which-is-null-for-an-image-loader.md) |

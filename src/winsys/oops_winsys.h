@@ -81,6 +81,14 @@ int oops_winsys_memory_info(struct drm_amdgpu_memory_info *out);
 /* Bytes held by the buffers this shim has created and not yet closed. */
 uint64_t oops_winsys_bo_bytes_live(void);
 
+/* Drain the CPU's writes to every mapped buffer to memory, so a submission the GPU is about to
+ * read sees fresh bytes rather than stale ones (worklog 057). clflush half; the caller adds an
+ * sfence for the write-combined buffers. */
+void oops_winsys_flush_cpu_writes(void);
+
+/* Diagnostic: log each GPU-readable buffer's address and first dwords (worklog 057). */
+void oops_winsys_dump_bos(void);
+
 /* The CPU address of a range inside a live buffer, mapping it if it is not mapped yet. Returns
  * NULL for a dead handle or a range that does not fit. Submission uses it to land a sequence
  * number where an `AMDGPU_CHUNK_ID_FENCE` chunk asked for it. */

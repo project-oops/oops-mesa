@@ -82,6 +82,64 @@ uint64_t oops_winsys_bo_bytes_live(void)
     return total;
 }
 
+/*
+ * Make every CPU write to a mapped buffer visible to the GPU before a submission reads it.
+ *
+ * radeonsi writes shaders, command buffers and vertex data through a buffer's CPU mapping and then
+ * submits, assuming the kernel/winsys drains those writes before the GPU executes - it performs no
+ * flush of its own (mesa si_buffer.c:65-67 "the kernel ensures all CPU writes finish before the GPU
+ * executes a command stream"; the shader upload ends in a bare buffer_unmap, si_shader_binary.c:217).
+ * Nothing on this platform does that for radeonsi's buffers, so the GPU prefetched stale shader bytes
+ * and its wavefronts hit ILLEGAL_INST (worklog 057). oops-gl flushes every buffer it hands the GPU
+ * for the same reason (oops-sdk gl_context.c, agc_draw.c); this is the winsys doing it on radeonsi's
+ * behalf. clflush drains the write-back "Onion" buffers; the caller follows with one sfence to drain
+ * the write-combined "Garlic" ones - where shaders live. clflush on a write-combined line is a no-op,
+ * so doing both is safe for either kind.
+ *
+ * It walks only CPU-mapped buffers: a buffer the CPU never mapped carries no CPU writes to drain.
+ */
+void oops_winsys_flush_cpu_writes(void)
+{
+#if defined(__x86_64__)
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_BO; i++) {
+        struct oops_winsys_bo *bo = &s_bo[i];
+        if (!bo->live || !bo->cpu_ptr) {
+            continue;
+        }
+        const char *p = (const char *)bo->cpu_ptr;
+        for (uint64_t off = 0; off < bo->size; off += 64) {
+            __builtin_ia32_clflush((const void *)(p + off));
+        }
+    }
+#endif
+}
+
+/*
+ * DIAGNOSTIC (worklog 057): log the GPU address and first dwords of every buffer the GPU can read,
+ * so a run says what is actually at the shader address the wavefronts fault on. Read from cpu_ptr - a
+ * valid CPU mapping of the same physical pages the GPU fetches - so it is safe (no read of a raw GPU
+ * VA). Recognisable RDNA2 words (s_endpgm 0xbf810000, scalar 0xbe../0xbf.., s_sendmsg 0xbf900009) mean
+ * the code is present and valid; a repeating pattern or zeros mean it is stale/unmapped. Delete with
+ * the bug.
+ */
+void oops_winsys_dump_bos(void)
+{
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_BO; i++) {
+        struct oops_winsys_bo *bo = &s_bo[i];
+        /* Every CPU-mapped buffer, whether or not it has a GPU address yet, so the shader code is
+         * found wherever radeonsi actually wrote it. handle and phys included to correlate the CPU
+         * mapping with the GPU-VA mapping. */
+        if (!bo->live || !bo->cpu_ptr || bo->size < 32) {
+            continue;
+        }
+        const uint32_t *w = (const uint32_t *)bo->cpu_ptr;
+        oops_winsys_log("bo h%u va 0x%llx phys 0x%llx: %08x %08x %08x %08x %08x %08x %08x %08x",
+                        (unsigned)(i + 1), (unsigned long long)bo->gpu_va,
+                        (unsigned long long)bo->phys,
+                        w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+    }
+}
+
 static uint64_t round_up_page(uint64_t n)
 {
     return (n + OOPS_WINSYS_PAGE - 1u) & ~(uint64_t)(OOPS_WINSYS_PAGE - 1u);
@@ -104,15 +162,19 @@ int oops_winsys_gem_create(union drm_amdgpu_gem_create *arg)
         return -EINVAL;
     }
 
-    /* The domain says where the driver wants it. This platform has one physical pool and the
-     * distinction that survives is the cache policy: a buffer the GPU reads hot wants the
-     * write-combined path, one the CPU reads back wants the cached one. That mapping is
-     * oops-gl's, which measured both on this firmware. */
-    if (arg->in.domains & AMDGPU_GEM_DOMAIN_VRAM) {
-        type = OOPS_MEM_WC_GARLIC;
-    } else {
-        type = OOPS_MEM_WB_ONION;
-    }
+    /* Every buffer is cached write-back "Onion", whatever domain the driver asked for.
+     *
+     * The obvious mapping - VRAM to write-combined "Garlic", GTT to Onion - was here until worklog
+     * 058, and it put radeonsi's shaders (which it allocates in VRAM) into Garlic. A hardware dump
+     * showed those shader pages reading back as zeros while the GTT command buffer beside them held
+     * the bytes radeonsi wrote: CPU writes to Garlic were not reaching the pages the GPU fetches, so
+     * the wavefronts ran zeros and faulted ILLEGAL_INST (worklog 057). oops-gl puts every buffer it
+     * hands the GPU - shaders included - in Onion (oops-sdk gl_context.c, oops_mem_alloc WB_ONION)
+     * and they execute. obSCEne is chasing the same Garlic/Onion split on the bus (REQ-...a6c2).
+     * Until Garlic is understood, Onion is the one that works; the cost is CPU-cached GPU memory,
+     * which the pre-submit clflush already accounts for. The requested domain is still recorded in
+     * bo->domain below for GEM_OP to report back; it just no longer picks the cache policy. */
+    type = OOPS_MEM_WB_ONION;
 
     for (uint32_t i = 0; i < OOPS_WINSYS_MAX_BO; i++) {
         if (!s_bo[i].live) {
@@ -145,6 +207,10 @@ int oops_winsys_gem_create(union drm_amdgpu_gem_create *arg)
 
     memset(&arg->out, 0, sizeof(arg->out));
     arg->out.handle = handle;
+    /* DIAGNOSTIC (worklog 059): the bo lifecycle, to trace which handle/phys backs a VA over time -
+     * the identity/lifecycle question the shader-empty finding turned on (worklog 058). */
+    oops_winsys_log("CREATE h%u phys 0x%llx sz %llu", handle,
+                    (unsigned long long)phys, (unsigned long long)size);
     return 0;
 }
 
@@ -154,6 +220,8 @@ int oops_winsys_gem_close(uint32_t handle)
     if (!bo) {
         return -EINVAL;
     }
+    oops_winsys_log("CLOSE  h%u phys 0x%llx va 0x%llx", handle,
+                    (unsigned long long)bo->phys, (unsigned long long)bo->gpu_va);
     if (bo->cpu_ptr) {
         oops_mem_unmap(bo->cpu_ptr, (size_t)bo->size);
     }
@@ -201,6 +269,8 @@ void *oops_winsys_mmap(int fd, size_t length, uint64_t offset)
         }
         bo->cpu_ptr = v;
     }
+    oops_winsys_log("MMAP  h%u len %llu phys 0x%llx cpu %p", handle,
+                    (unsigned long long)length, (unsigned long long)bo->phys, bo->cpu_ptr);
     return bo->cpu_ptr;
 }
 
@@ -272,9 +342,15 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg)
         return -ENOSYS;
     }
 
-    if (arg->flags & AMDGPU_VM_PAGE_READABLE) prot |= OOPS_PROT_GPU_READ;
-    if (arg->flags & AMDGPU_VM_PAGE_WRITEABLE) prot |= OOPS_PROT_GPU_WRITE;
-    if (prot == 0) prot = OOPS_PROT_GPU_READ;
+    /* Map at libdrm's chosen VA for both the GPU and the CPU. This platform is a unified-memory
+     * APU - device_info.c advertises AMDGPU_IDS_FLAGS_FUSION, so radeonsi treats a buffer's GPU
+     * virtual address as CPU-addressable too and writes to it directly. A GPU-only mapping then
+     * faults that CPU write (the page-not-present crash at a GPU VA the first submission produced,
+     * worklog 054). oops-gl's own allocations carry OOPS_PROT_CPU_RW | OOPS_PROT_GPU_RW at one VA
+     * for exactly this reason (oops-sdk memory.c, oops_mem_alloc). */
+    if (arg->flags & AMDGPU_VM_PAGE_READABLE)  prot |= OOPS_PROT_GPU_READ | OOPS_PROT_CPU_READ;
+    if (arg->flags & AMDGPU_VM_PAGE_WRITEABLE) prot |= OOPS_PROT_GPU_WRITE | OOPS_PROT_CPU_WRITE;
+    if (prot == 0) prot = OOPS_PROT_GPU_READ | OOPS_PROT_CPU_READ;
 
     switch (arg->operation) {
     case AMDGPU_VA_OP_MAP: {
@@ -286,6 +362,8 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg)
             return -ENOMEM;
         }
         bo->gpu_va = arg->va_address;
+        oops_winsys_log("VA MAP h%u va 0x%llx phys 0x%llx", arg->handle,
+                        (unsigned long long)arg->va_address, (unsigned long long)bo->phys);
         return 0;
     }
     case AMDGPU_VA_OP_UNMAP:
