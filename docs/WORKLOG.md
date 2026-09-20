@@ -77,3 +77,4 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [063. Presentation called the swrast swap, which is null for an image loader](worklog/063-present-called-the-swrast-swap-which-is-null-for-an-image-loader.md) |
 | - | [064. The first render: a clear to a known colour reads back pixel-exact](worklog/064-the-first-render-a-clear-reads-back-pixel-exact.md) |
 | - | [065. A frame from upstream Mesa on the panel: the flip works](worklog/065-a-frame-from-upstream-mesa-on-the-panel.md) |
+| - | [066. The GLSL pipeline runs, and the wall in front of it was a thread stack](worklog/066-the-glsl-pipeline-runs-and-the-stack-was-the-wall.md) |

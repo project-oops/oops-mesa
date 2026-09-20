@@ -52,6 +52,14 @@ __attribute__((weak)) int scePthreadCreate(void *thread, const void *attr,
                                            void *(*entry)(void *), void *arg, const char *name);
 __attribute__((weak)) int scePthreadJoin(void *thread, void **value);
 __attribute__((weak)) int scePthreadDetach(void *thread);
+/* The attribute trio, for the stack size `pthread_create` below has to ask for. Same group and
+ * same arity as the rest: `oops-sdk/src/thread/thread.c` declares and calls all three, and its
+ * titles run on hardware, so these are bound rather than assumed. The build's own import
+ * manifest agrees - `build/mesa-imports.txt` attributes `scePthreadAttrInit`,
+ * `scePthreadAttrSetstacksize` and `scePthreadAttrDestroy` to `libkernel`. */
+__attribute__((weak)) int scePthreadAttrInit(void *attr);
+__attribute__((weak)) int scePthreadAttrSetstacksize(void *attr, size_t stacksize);
+__attribute__((weak)) int scePthreadAttrDestroy(void *attr);
 __attribute__((weak)) void *scePthreadSelf(void);
 __attribute__((weak)) int scePthreadEqual(void *a, void *b);
 __attribute__((weak)) int scePthreadMutexInit(void *mutex, const void *attr, const char *name);
@@ -109,11 +117,99 @@ static int to_errno(int rc)
 
 /* --- threads ------------------------------------------------------------------------- */
 
+/*
+ * The stack Mesa's threads need, which is not the one this platform gives them.
+ *
+ * Mesa's C11 threads layer calls `pthread_create(thr, NULL, ...)` - a **null attribute**, every
+ * time, from `mesa/src/c11/impl/threads_posix.c:255`. On a Linux host that means glibc's default
+ * of 8 MB. Here it meant the vendor's default, and the vendor's default is small enough that
+ * Mesa's shader compiler runs off the end of it.
+ *
+ * That is measured, not reasoned: on 2026-09-20 `DRIP00001` compiled and linked a GLSL 330
+ * program and took a SIGSEGV on thread `dri-probe:gl0`, fault address `0x7eed80fa8` against
+ * `rsp 0x7eed80fb0` - the fault is exactly `rsp - 8`, which is a `call` pushing its return
+ * address onto a page that is not there. Not a bad pointer: a stack that ended. The backtrace,
+ * resolved against the link map, is `impl_thrd_routine` -> `util_queue_thread_func` ->
+ * `glthread_unmarshal_batch` -> `_mesa_unmarshal_LinkProgram` -> `st_link_shader` ->
+ * `gl_nir_link_glsl` -> `gl_nir_link_varyings` -> `nir_opt_varyings_bulk` -> `nir_opt_varyings`,
+ * which faulted 0x49 bytes in. Ten frames had consumed about 72 KB (`rbp - rsp` = 0x119b0), and
+ * the pass that died allocates its own large structure on the heap (`MALLOC_STRUCT(linkage_info)`)
+ * - so this is ordinary compiler frame depth against a stack far too small for it, not one
+ * runaway frame. See the worklog entry and `docs/hardware/` for the full capture.
+ *
+ * 8 MB is chosen because it is what upstream Mesa is written and tested against, not because 72 KB
+ * needed rounding up. Sizing this to the failure that was seen would leave the next, larger shader
+ * to find the new edge on the console; matching the host removes the whole class. The cost is
+ * address space rather than memory - these are demand-paged reservations, and only the pages a
+ * thread touches are ever committed.
+ *
+ * This belongs here and not in a Mesa patch (principle 1): Mesa asking for a default stack is
+ * correct, and what a default stack *is* on this platform is precisely what the runtime shim
+ * exists to answer.
+ */
+#define MESA_THREAD_STACK_BYTES ((size_t)8u * 1024u * 1024u)
+
+/* One line if the bigger stack could not be asked for, said once. Falling back to the vendor
+ * default is not a failure this function can refuse - a thread that is not created is worse than
+ * a thread that might overflow - but it is the cause of a crash that would otherwise look
+ * unexplained, so it does not pass in silence (principle 4). */
+extern void oops_winsys_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                    void *(*start)(void *), void *arg)
 {
     NEED(scePthreadCreate);
-    return to_errno(scePthreadCreate(thread, attr, start, arg, k_thread_name));
+
+    /* A caller that brought its own attribute keeps it. Mesa never does today; if some future
+     * caller does, its choice is deliberate and outranks the default set below. */
+    if (attr != NULL) {
+        return to_errno(scePthreadCreate(thread, attr, start, arg, k_thread_name));
+    }
+
+    /*
+     * The attribute is a pointer to an opaque structure the vendor allocates, so what is held
+     * here is room for that pointer and the address of *that* is what the calls take. The buffer
+     * is oversized on purpose and zeroed first, which is exactly what oops-sdk's
+     * `oops_thread_create` does with the same three calls - this mirrors a working caller rather
+     * than inventing a second convention.
+     */
+    char attr_buf[128];
+    void *attr_ptr = NULL;
+    bool sized = false;
+
+    if (scePthreadAttrInit != NULL) {
+        for (size_t i = 0; i < sizeof attr_buf; i++) {
+            attr_buf[i] = 0;
+        }
+        if (scePthreadAttrInit(attr_buf) == 0) {
+            attr_ptr = attr_buf;
+            if (scePthreadAttrSetstacksize != NULL &&
+                scePthreadAttrSetstacksize(attr_ptr, MESA_THREAD_STACK_BYTES) == 0) {
+                sized = true;
+            }
+        }
+    }
+
+    if (!sized) {
+        static bool said = false;
+        if (!said) {
+            said = true;
+            oops_winsys_log("pthread_create: could not set a %zu-byte stack; Mesa's threads take "
+                            "the vendor default, which its shader compiler has been measured to "
+                            "overflow. Said once, not per thread.",
+                            MESA_THREAD_STACK_BYTES);
+        }
+    }
+
+    int rc = scePthreadCreate(thread, attr_ptr, start, arg, k_thread_name);
+
+    /* Destroyed either way: the attribute is the vendor's allocation and the thread has its own
+     * copy of what it needed by the time create returns. */
+    if (attr_ptr != NULL && scePthreadAttrDestroy != NULL) {
+        scePthreadAttrDestroy(attr_ptr);
+    }
+
+    return to_errno(rc);
 }
 
 int pthread_join(pthread_t thread, void **value)
