@@ -33,6 +33,18 @@ D006 records both, and records that if the subset ever grows past a screen the a
 compiler for the whole collection rather than a longer support file. That decision belongs to the
 collection, not here: clang 18 is pinned to match oops-sdk and oops-apps.
 
+> **Amendment, 2026-09-21.** The last sentence above was true when written and is not now: the
+> collection moved to clang 21 (D013), so the decision this entry deferred has been made. The
+> numbers in this section stay as they are - a worklog is a dated record of what was measured on
+> the day, not a claim about the present (CONVENTIONS section 6). For the record they were
+> re-taken on one tree under both compilers: clang 18 fails 39 of 65 and clang 21 fails 6, and
+> none of the 6 is the type-trait failure described here. The denominator differs because the
+> `freebsd-src` pin has moved since. See [worklog 072](072-the-clang-21-bump-and-what-it-did-not-buy.md).
+>
+> The **surprise** recorded below is unaffected and is still the useful part: a consumer of
+> libc++'s headers touches a small enough part of them that a version gap never shows, and the
+> library touches all of it.
+
 ## Surprises
 
 - **Mesa compiles against libc++ 21's headers with clang 18 perfectly well.** The library's own
