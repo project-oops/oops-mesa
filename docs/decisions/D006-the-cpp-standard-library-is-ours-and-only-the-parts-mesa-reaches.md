@@ -29,6 +29,13 @@ this project has or wants.
 
 ## Why libc++ is not built from the pinned checkout
 
+> **Amended 2026-09-21 - the compiler argument in this section no longer holds.** The collection
+> moved to clang 21 (D013). The paragraph below is kept because it is the reasoning that led
+> there and because its measurement is a dated record, not because it still describes the tree.
+> What is *still* true is the choice at the top of this entry: oops-mesa provides the definitions
+> Mesa references rather than a whole standard library, and `tools/what-is-still-needed.sh` is
+> what keeps that honest. Read the section after it for what changed.
+
 It was tried, as libelf is built, and it does not compile. The checkout's libc++ is
 `_LIBCPP_VERSION 210108`, which is LLVM 21. The collection's compiler is clang 18, three major
 versions behind, and libc++ expects a compiler at least as new as itself: 43 of its 71 sources
@@ -36,6 +43,42 @@ fail, on constructs in its own type traits that clang 18 does not implement.
 
 Moving the container to clang 21 would fix it and is not this repository's call: CLAUDE.md pins
 clang 18 to match oops-sdk and oops-apps, so the whole collection moves together or not at all.
+
+### What clang 21 actually changed, measured (2026-09-21)
+
+The collection moved, so the number above was re-taken rather than assumed - both compilers, the
+same tree, the same flags `toolchain/build-mesa.sh` uses, one source at a time:
+
+| compiler | compiled | failed | of |
+|---|---|---|---|
+| clang 18.1.8 | 26 | 39 | 65 |
+| clang 21.1.8 | 59 | **6** | 65 |
+
+The denominator is 65 rather than 71 because the `freebsd-src` pin has moved since this entry was
+written; the shape of the original claim is confirmed.
+
+**The six that remain are not this section's failure.** None is a type trait.
+`pstl/libdispatch.cpp` and `support/ibm/xlocale_zos.cpp` want Apple's and IBM's headers and are
+never built off those platforms by upstream either. Three are the experimental time-zone database,
+behind an opt-in this build does not set. `charconv.cpp` wants `libc/shared/fp_bits.h`, a header
+libc++ reaches for across llvm-project's subtree boundary, which FreeBSD does not vendor into
+`contrib` - so in *this* repository's tree it has no source and `charconv` stays absent.
+(oops-apps' checkout takes libc++ from llvm-project directly and fixes it by widening its sparse
+checkout, which is why the two trees now differ on this one file.)
+
+So the corrected statement is narrow: **clang 21 removes every failure attributable to the
+compiler being older than the library.** It does not make the whole of libc++ buildable here, and
+nothing in D013 claims it does.
+
+### What this means for the choice above
+
+Less than it looks. The reason for providing a subset was never only that the rest would not
+compile - it is that Mesa reaches eight definitions and a standard library nobody links is weight
+with an ABI surface. That argument is untouched by a newer compiler, so **this entry's choice
+stands** and `what-is-still-needed.sh` remains the thing that would signal otherwise.
+
+What *has* gone is the sentence this section used to end on. "The whole collection moves together
+or not at all" was a statement that the question was open. It has been answered.
 
 ## What keeps this honest as Mesa changes
 

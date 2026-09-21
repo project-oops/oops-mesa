@@ -4,7 +4,7 @@ The container build and its inputs. Nothing here runs on the machine directly.
 
 | file | state | what it is |
 |---|---|---|
-| `Dockerfile` | exists | the image: clang 18 with lld, ninja, the Python packages Mesa's generators need, and meson from pip because the distribution's is older than Mesa requires. No LLVM: the shader backend is ACO. |
+| `Dockerfile` | exists | the image: clang 21 with lld, ninja, the Python packages Mesa's generators need, and meson from pip because the distribution's is older than Mesa requires. No LLVM: the shader backend is ACO. Its `FROM` tag is the collection's authoritative compiler pin (D013), and `OOPS/tools/check-toolchain.sh` fails when the other repositories disagree with it. |
 | `stage-sysroot.sh` | exists | copies the C-library headers out of the checkout `dependencies.mk` pins, in the layout FreeBSD installs them, into `sysroot/usr/include`. Reads the checkout's object store only, so it cannot disturb the tree orbistoun harvests from. |
 | `cross-prospero.ini` | exists | the meson cross file: `clang -target x86_64-unknown-freebsd`, the staged sysroot, and the target flags oops-apps' `app.mk` uses, minus the freestanding ones, because a title linking oops-mesa is hosted (D002). |
 | `build-mesa.sh` | exists | applies `../patches/`, configures Mesa for radeonsi and ACO only, static, no LLVM, and builds. Stops with the reason on standard error when a dependency cannot be met. |
@@ -21,9 +21,12 @@ Run it through the verb, which stages the sysroot before it starts the container
 
 ## What it produces today
 
-48 static archives for `x86_64-unknown-freebsd`, including radeonsi, ACO, NIR, GLSL, AddressLib
-and libdrm's `libdrm_amdgpu.a`
-([worklog 005](../docs/worklog/005-mesa-compiles-for-the-console.md)). libdrm is carried as a
+Static archives for `x86_64-unknown-freebsd`, including radeonsi, ACO, NIR, GLSL, AddressLib
+and libdrm's `libdrm_amdgpu.a`. **How many is not written here**: the build prints the count and
+`build/link-order.txt` is the list, so a number in this sentence would be a copy of something the
+build already owns, and it was wrong by three before anybody noticed (CONVENTIONS section 5). The
+first build to produce them is
+[worklog 005](../docs/worklog/005-mesa-compiles-for-the-console.md). libdrm is carried as a
 pinned dependency rather than replaced, and `patches/001` routes its `ioctl` and `mmap` into the
 winsys shim (D005). What is not yet settled is at run time on the hardware, not at compile time:
 the winsys and platform shims of roadmap units 5 and 6. The earlier point, where the configure

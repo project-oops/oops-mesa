@@ -83,3 +83,4 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [069. The display takes the address, but not a third buffer](worklog/069-the-display-takes-the-address-but-not-a-third-buffer.md) |
 | - | [070. The CPU stops touching the pixels](worklog/070-the-cpu-stops-touching-the-pixels.md) |
 | - | [071. Two buffers, and the pacing that had to come with them](worklog/071-two-buffers-and-the-pacing-that-had-to-come-with-them.md) |
+| - | [072. The clang 21 bump, and what it did not buy](worklog/072-the-clang-21-bump-and-what-it-did-not-buy.md) |

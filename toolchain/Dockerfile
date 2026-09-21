@@ -5,9 +5,18 @@
 #   docker build -t oops-mesa-toolchain:dev toolchain/
 #   docker run --rm -v "$PWD:/w" -w /w oops-mesa-toolchain:dev ./toolchain/build-mesa.sh
 #
-# clang 18 matches the compiler oops-sdk and oops-apps build with (silkeh/clang:18), so the
-# shims and the titles that link them see one compiler and one set of target flags.
-FROM silkeh/clang:18
+# clang 21 matches the compiler oops-sdk, oops-apps and obSCEne build with, so the shims and
+# the titles that link them see one compiler and one set of target flags.
+#
+# **This tag is the collection's authoritative toolchain pin** (D013). It was clang 18
+# until 2026-09-21, and the bump is what makes a C++ standard library reachable: the libc++
+# already staged here is `_LIBCPP_VERSION 210108`, and D006 measured 43 of its 71 sources
+# failing against clang 18 on constructs in its own type traits. A compiler at least as new as
+# the library it ships with removes that class of failure rather than working around it.
+#
+# The major version here and the one every other repository's `toolchain.mk` guards against are
+# the same number by construction: `OOPS/tools/check-toolchain.sh` fails when they diverge.
+FROM silkeh/clang:21
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
