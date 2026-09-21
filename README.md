@@ -8,7 +8,7 @@ between a Linux box and the hardware: memory, submission and fences (the winsys)
 (the platform), and the C-runtime surface Mesa stands on. Mesa's OpenGL, GLSL compiler, hardware
 driver, tiling library and shader backend are consumed, never edited in place.
 
-Status: **skeleton**. Nothing renders yet. The roadmap below says what comes first and why.
+The roadmap below says which unit of work comes next, and why that order.
 
 ## What is here
 
@@ -18,13 +18,12 @@ Status: **skeleton**. Nothing renders yet. The roadmap below says what comes fir
 | `patches/` | numbered patches applied to Mesa at build time, each small and explained | us |
 | `src/winsys/` | buffers, mapping, command submission, fences, over the vendor driver calls oops-sdk binds | us |
 | `src/runtime/` | the C-runtime surface Mesa stands on: the thread mapping over the vendor thread API, the absent-libc stubs, the C++ support source, and the start-up ABI symbols | us |
-| `src/platform/` | presentation through the display the SDK opens; designed (D009, D010), not written yet | us |
+| `src/platform/` | presentation through the display the SDK opens, reached through Mesa's Gallium DRI frontend (D009, D010) | us |
 | `toolchain/` | the container build: image, cross file, the pinned C-library headers | us |
 | `tools/` | host tools built against the pinned Mesa; `preamble-dump` prints the command-stream preamble radeonsi emits for this hardware and `tiling-compare` checks a radeonsi surface against oops-sdk's tiler, their outputs tracked as data | us |
 | `docs/` | decisions, roadmap, worklog | us |
 
-`src/winsys/` and `src/runtime/` are populated; `src/platform/` is not written yet. Each
-directory appears with the unit of work that fills it.
+Each directory appears with the unit of work that fills it.
 
 ## How a title consumes it
 

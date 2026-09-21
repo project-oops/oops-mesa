@@ -78,3 +78,8 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [064. The first render: a clear to a known colour reads back pixel-exact](worklog/064-the-first-render-a-clear-reads-back-pixel-exact.md) |
 | - | [065. A frame from upstream Mesa on the panel: the flip works](worklog/065-a-frame-from-upstream-mesa-on-the-panel.md) |
 | - | [066. The GLSL pipeline runs, and the wall in front of it was a thread stack](worklog/066-the-glsl-pipeline-runs-and-the-stack-was-the-wall.md) |
+| - | [067. Unit 8 needs a C++ standard library, and nobody had costed it](worklog/067-unit-8-needs-a-cpp-standard-library-nobody-costed.md) |
+| - | [068. The GPU draws in four milliseconds, and the CPU spends thirty-two delivering it](worklog/068-the-gpu-draws-in-four-milliseconds-the-cpu-spends-thirty-two.md) |
+| - | [069. The display takes the address, but not a third buffer](worklog/069-the-display-takes-the-address-but-not-a-third-buffer.md) |
+| - | [070. The CPU stops touching the pixels](worklog/070-the-cpu-stops-touching-the-pixels.md) |
+| - | [071. Two buffers, and the pacing that had to come with them](worklog/071-two-buffers-and-the-pacing-that-had-to-come-with-them.md) |

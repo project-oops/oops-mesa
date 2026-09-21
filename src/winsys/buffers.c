@@ -71,6 +71,49 @@ static struct oops_winsys_bo *bo_of(uint32_t handle)
     return bo->live ? bo : NULL;
 }
 
+/*
+ * How many bytes a buffer actually occupies, which is how the platform shim tells a tiled colour
+ * target from a linear one.
+ *
+ * Mesa has no route to the answer: the drawable image carries no DRM format modifier, because it
+ * is created with `modifiers = NULL`, so `dri2_query_image` reports the modifier `unavailable` and
+ * the stride is the same either way (1920 is already a multiple of 128, so a `64KB_R_X` surface's
+ * padded pitch equals the linear one). The allocation size is not the same either way. addrlib
+ * pads a `64KB_R_X` surface's height to a multiple of 128, so at 1920x1080 it asks for
+ * 1920 x 1152 x 4 = 8847360 bytes where a linear surface asks for 1920 x 1080 x 4 = 8294400.
+ *
+ * This is the size the winsys was asked for at `GEM_CREATE` and rounded to a page, not a size
+ * derived from the width and height here - deriving it would answer the question with the
+ * assumption it is meant to test.
+ *
+ * Zero for a handle that is not live, which is distinguishable from any real allocation.
+ */
+uint64_t oops_winsys_bo_size(uint32_t handle)
+{
+    const struct oops_winsys_bo *bo = bo_of(handle);
+
+    return bo ? bo->size : 0;
+}
+
+/*
+ * Where `GEM_VA` mapped a buffer, or zero if it is not mapped.
+ *
+ * This is the address the GPU reads and writes through, and on this platform it is also the one
+ * the CPU sees: `oops_mem_batch_map` maps a buffer's physical pages once, at the address libdrm
+ * chose, for both. That is why the display can be handed it directly - `agc_display.c` registers
+ * its own scanout buffers by exactly the same kind of pointer, the mapped address it got from
+ * `sceKernelBatchMap`.
+ *
+ * `cpu_ptr` is deliberately not this. That field is where the shim's own `mmap` put a buffer when
+ * libdrm asked for a CPU mapping, which is a different question and can be a different address.
+ */
+uint64_t oops_winsys_bo_gpu_va(uint32_t handle)
+{
+    const struct oops_winsys_bo *bo = bo_of(handle);
+
+    return bo ? bo->gpu_va : 0;
+}
+
 uint64_t oops_winsys_bo_bytes_live(void)
 {
     uint64_t total = 0;

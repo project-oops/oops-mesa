@@ -41,4 +41,5 @@ the screen, which is why the first attempt showed the frame for one flip then bl
 - The vertical flip for correct orientation (a row-reverse of the readback, or a flipped render).
 - Unit 6's own gate is a **hashed** known frame; the pixels are on screen now, the hash is the last
   step. Then the CPU readback + CPU tile per present is the obvious performance follow-up (render
-  straight into a scanout buffer, per REQ-7e21), not a correctness one.
+  straight into a scanout buffer), not a correctness one. *(Written as "per REQ-7e21"; that
+  identifier is `oops-sdk#REQ-20260919T1927Z-7e21`, oops-gl's, and this work is D012 step 3.)*

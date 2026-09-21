@@ -7,10 +7,20 @@
 #   fcntl(F_DUPFD_CLOEXEC). Nothing else is touched, and no behaviour changes when the define is
 #   off.
 #
-#   The third is there because the descriptor is a token naming the one device this shim serves
-#   rather than a kernel object, so there is nothing for fcntl to duplicate. Keeping the same
-#   token leaves dev->fd equal to dev->flink_fd, which is what libdrm's own release path already
-#   expects, so it closes once and that close is a no-op in the shim.
+#   The third is there because **this platform does not implement fcntl-based duplication at
+#   all**: `F_DUPFD` and `F_DUPFD_CLOEXEC` both return EINVAL, measured on hardware even for a
+#   genuine open regular file (worklog 049, three runs). So the dup cannot succeed whatever the
+#   descriptor is, and leaving it in place would fail device initialisation before a single ioctl.
+#   Keeping the fd leaves dev->fd equal to dev->flink_fd, which is what libdrm's own release path
+#   already expects, so it closes once and that close is a no-op in the shim.
+#
+#   This reason was restated on 2026-09-21. It previously read "the descriptor is a token naming
+#   the one device this shim serves rather than a kernel object, so there is nothing to
+#   duplicate" - true when the patch was written, and false since worklog 049 made
+#   `oops_winsys_open` return a real dup-able fd. The hunk is still required; only its
+#   justification had gone stale, and a stale justification on a patch is how a necessary patch
+#   gets deleted by someone who checks the stated reason and finds it no longer holds.
+#   Patch 003 is the other half of the same platform fact, at Mesa's own `os_dupfd_cloexec`.
 #
 # Why it could not be a shim
 #   libdrm calls libc's ioctl and mmap directly by name. The only way to intercept that without
@@ -87,10 +97,10 @@
  	}
  
 +#ifdef OOPS_MESA_WINSYS
-+	/* The descriptor is a token naming the one device this shim serves, not a kernel object,
-+	 * so there is nothing to duplicate. Keeping the same token leaves dev->fd equal to
-+	 * dev->flink_fd, which is what the release path below already expects, and closing it is a
-+	 * no-op in the shim. */
++	/* `F_DUPFD` and `F_DUPFD_CLOEXEC` both return EINVAL on this platform, measured on hardware
++	 * even for a genuine open regular file (worklog 049), so there is no dup to be had whatever
++	 * this descriptor is. Keeping it leaves dev->fd equal to dev->flink_fd, which the release
++	 * path below already expects, and closing it is a no-op in the shim. */
 +	dev->fd = fd;
 +#else
  	dev->fd = fcntl(fd, F_DUPFD_CLOEXEC, 0);

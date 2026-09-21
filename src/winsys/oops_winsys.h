@@ -81,6 +81,17 @@ int oops_winsys_memory_info(struct drm_amdgpu_memory_info *out);
 /* Bytes held by the buffers this shim has created and not yet closed. */
 uint64_t oops_winsys_bo_bytes_live(void);
 
+/* How many bytes one buffer occupies, as asked for at GEM_CREATE and rounded to a page. Zero for
+ * a handle that is not live. The platform shim uses it to tell a tiled colour target from a
+ * linear one, which nothing in Mesa's image API will report on a surface created without
+ * modifiers - see the note on the definition. */
+uint64_t oops_winsys_bo_size(uint32_t handle);
+
+/* Where GEM_VA mapped a buffer, or zero if it is not mapped. The GPU reads through it and so does
+ * the CPU - one mapping serves both here - which is what lets the display be handed a radeonsi
+ * buffer directly (D012 step 3). Not `cpu_ptr`; see the note on the definition. */
+uint64_t oops_winsys_bo_gpu_va(uint32_t handle);
+
 /* Drain the CPU's writes to every mapped buffer to memory, so a submission the GPU is about to
  * read sees fresh bytes rather than stale ones (worklog 057). clflush half; the caller adds an
  * sfence for the write-combined buffers. */

@@ -273,6 +273,39 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
              * rather than ignored so that making submission asynchronous starts by deleting this
              * case. */
             break;
+        case AMDGPU_CHUNK_ID_BO_HANDLES:
+            /*
+             * The buffers this submission touches, named inline instead of through a pre-created
+             * list. The chunk data is a whole `drm_amdgpu_bo_list_in` with `operation` and
+             * `list_handle` both `~0` - the same request `DRM_IOCTL_AMDGPU_BO_LIST` takes, posted
+             * with the stream rather than before it (`amdgpu_cs.cpp:1319`). radeonsi sends one per
+             * submission, so this arrives on every frame.
+             *
+             * **Residency is what it is for, and there is none to manage here.** On Linux the
+             * kernel reads this list to make each buffer resident before the stream runs. In this
+             * shim a buffer becomes GPU-reachable at `AMDGPU_VA_OP_MAP`, which maps its pages and
+             * leaves them mapped until `AMDGPU_VA_OP_UNMAP` or the buffer is destroyed
+             * (`buffers.c`). Nothing evicts, nothing pages out, and `oops_winsys_bo_is_busy`
+             * always answers no because submission waits for its own fence. So every buffer named
+             * here was already reachable before the stream was built, and making it resident is
+             * work that does not exist. `context.c` says the same thing about the ioctl form.
+             *
+             * Named rather than left to `default:` because it is not unhandled - it is handled by
+             * having nothing to do, and it was printing "chunk kind 6 is not handled" about ten
+             * times a frame, which reads like a gap and is not one.
+             *
+             * **What would make it matter.** Two things, and neither is true today. If buffers
+             * ever become evictable - a real memory manager, or sparse residency, which
+             * `AMDGPU_VA_OP_CLEAR`/`REPLACE` refuse for now - this list becomes the statement of
+             * what to bring back, and this case stops being empty. And there is one piece of work
+             * available even now that is deliberately not taken: the ioctl path walks the same
+             * entries and refuses a handle that is not live, so a stale handle becomes a numbered
+             * refusal instead of a GPU fault in a later frame. Doing that here would be
+             * consistent - but it can refuse a submission that currently succeeds, and this path
+             * renders correctly today (frame hash `0x5188ddb7`, reproduced), so adopting it needs
+             * a hardware run behind it rather than a guess.
+             */
+            break;
         default:
             oops_winsys_log("command stream chunk kind %u is not handled", chunk->chunk_id);
             break;

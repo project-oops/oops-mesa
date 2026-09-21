@@ -55,6 +55,20 @@ the plan.
 
 ## What is not established
 
+> **Answered on 2026-09-21, and the answer is no.** The first registration of a radeonsi buffer was
+> made - `VA 0x400600000`, 8896512 bytes, at slot index 2 - and refused with `0x80290001`,
+> `SCE_VIDEO_OUT_ERROR_INVALID_VALUE` (obscene D214, D301). That code names no argument, so the
+> identical call was re-issued with **one input changed**: the display's own live scanout buffer
+> at `0x4000000000`, an address VideoOut had already accepted. It was refused **identically**.
+>
+> So the address is not what is rejected, and this shim does not need to place the surface in the
+> display's neighbourhood. What is rejected is the **slot index**: oops-sdk's display registers two
+> buffers when it opens, so indices 0 and 1 exist and index 2 does not. Registering a third means
+> re-registering the set, which is the display's to do rather than this shim's - see D012 step 3.
+>
+> The paragraph below is left as written, because its reasoning is what made the measurement worth
+> taking and the answer worth having.
+
 **Whether `sceVideoOutRegisterBuffers2` constrains the address of a buffer it is given.**
 `agc_display.c` maps its buffers at `AGC_VM_BASE` = `0x40_0000_0000` and registers the mapped
 pointers. Nothing in that file says the address is required rather than chosen, and nothing in the

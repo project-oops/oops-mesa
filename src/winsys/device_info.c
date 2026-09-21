@@ -8,8 +8,13 @@
  *   classifier  it is not a property of the hardware at all. It is the value that makes Mesa's
  *               own chip identification reach the part we have established this is, and the
  *               constant is Mesa's, quoted back to it.
- *   assumed     nothing here has measured it. The reason it is plausible is stated, and
- *               REQ-20260914T1558Z-7d41 on the obSCEne bus is the request that would replace it.
+ *   assumed     nothing here has measured it, and on this platform nothing can. The reason each
+ *               value is plausible is stated. `REQ-20260914T1558Z-7d41` was the request that
+ *               would have replaced these, and it is **resolved**: both of its routes were tried
+ *               on hardware and refuse, so its own conclusion is that oops-mesa keeps them. They
+ *               are assumptions the platform declines to confirm, not assumptions awaiting a
+ *               measurement - and the difference matters, because the second kind implies someone
+ *               should go and take it.
  *
  * A caller gets a log line saying how many fields are still assumed, so a frame rendered on this
  * description is never mistaken for a frame rendered on measurements.
@@ -53,10 +58,11 @@ unsigned oops_winsys_device_info(struct drm_amdgpu_info_device *out)
     out->virtual_address_alignment = 0x4000;
 
     /* --- assumed ------------------------------------------------------------------------
-     * Everything below is REQ-20260914T1558Z-7d41's subject. Each line says why it is the
-     * plausible value rather than merely being one.
+     * Everything below was REQ-20260914T1558Z-7d41's subject, and **that request is resolved**:
+     * its outcome is "delivered (refusal / absent)" and its own conclusion is that oops-mesa keeps
+     * these fields. Each line says why it is the plausible value rather than merely being one.
      *
-     * Two of that request's routes have now been tried on hardware and refuse, so these are
+     * Both of that request's routes were tried on hardware and refuse, so these are
      * assumptions the platform will not confirm to a userland title, not assumptions nobody has
      * looked into:
      *   - Route 1, a vendor device-info call: sceAgcGetDeviceInfo is unresolvable in every sweep
@@ -65,7 +71,8 @@ unsigned oops_winsys_device_info(struct drm_amdgpu_info_device *out)
      *     (sweep 20260915-192617 lines 2295-2310). The kernel answers hw.model = "100-000000189",
      *     hw.ncpu = 16 and machdep.tsc_freq, but exposes no GPU topology.
      * What is left is a public source for this exact part (hw.model may be the lead) or deriving
-     * the counts from observed surface behaviour. Until then these carry 7d41's identifier. */
+     * the counts from observed surface behaviour. Neither is a measurement anyone can take on
+     * this hardware, so re-filing 7d41 would ask the bus a question it has already answered. */
 
     /* The GPU virtual-address ranges radeonsi allocates from. Every GPU mapping oops-gl has made
      * sits at 0x2_0000_0000, and it is the only address this collection has measured the platform
@@ -185,8 +192,11 @@ unsigned oops_winsys_device_info(struct drm_amdgpu_info_device *out)
      * None of these is counted as assumed. An assumed field is one where a value was chosen and
      * could be wrong; these are fields where zero is what this shim means. */
 
-    oops_winsys_log("device description: %u of its groups are assumed, not measured; "
-                    "REQ-20260914T1558Z-7d41 is the request that would settle them", assumed);
+    /* Assumed, and it stays that way: 7d41 is resolved, and its answer is that nothing on this
+     * platform will tell a userland title otherwise. The line says so rather than naming a
+     * request that is still waiting, because it is not. */
+    oops_winsys_log("device description: %u groups assumed; REQ-20260914T1558Z-7d41 resolved "
+                    "that no userland surface exposes them", assumed);
     return assumed;
 }
 
@@ -203,10 +213,24 @@ __attribute__((weak)) size_t sceKernelGetDirectMemorySize(void);
  * lays anything out from it, so a figure that is too large costs an allocation that comes back
  * ENOMEM rather than a corrupt surface.
  *
- * What is assumed is which pool the figure describes. buffers.c allocates through oops-sdk, and
- * on the console the SDK takes the main direct-memory call first (020-memory/allocate-main passes
- * there). Whether that pool is the one this size bounds is orbistoun's REQ-20260915T0030Z-5d1c,
- * and the resolution the bus carries for it is not in that sweep's log, so it is still open.
+ * **Which pool the figure describes is measured, not assumed.** It was orbistoun's
+ * `REQ-20260915T0030Z-5d1c`, and that request is resolved: `020-memory/direct-pools-sequence` ran
+ * all five steps in one hardware run and the rows are in
+ * `obscene/reports/hardware/20260915-192617-eboot.obs.log`, lines 324-332. They read, in order:
+ *
+ *     query1|size|0x300000000    alloc-direct|phys|0x2400000   alloc-direct|span|0x40000000
+ *     query2|size|0x300000000    alloc-main|phys|0x42400000    query3|size|0x300000000
+ *
+ * `sceKernelAllocateDirectMemory` took a gibibyte at `0x2400000`, and
+ * `sceKernelAllocateMainDirectMemory` then returned `0x42400000` - which is `0x2400000 +
+ * 0x40000000`, the byte after the first allocation ended. **The two calls allocate from one pool**,
+ * contiguously, so the size this function reports does bound the memory `buffers.c` gets through
+ * oops-sdk. The size query is also shown to be a constant capacity rather than a remaining count:
+ * it answered `0x300000000` before an allocation, after a gibibyte of it, and again after two.
+ *
+ * This comment previously said the resolution "is not in that sweep's log, so it is still open".
+ * It is in that sweep's log; the rows above were read out of it rather than taken from the bus's
+ * summary, which is the check this collection asks for before acting on a resolution.
  *
  * All three heaps are the same pool. The platform has one, and buffers.c maps any buffer for the
  * CPU whatever domain it was created in, so every byte of "VRAM" is CPU-visible.
@@ -239,7 +263,8 @@ int oops_winsys_memory_info(struct drm_amdgpu_memory_info *out)
     out->cpu_accessible_vram = heap;
     out->gtt = heap;
 
-    oops_winsys_log("memory description: 0x%llx bytes from the kernel; the pool it bounds is "
-                    "assumed (REQ-20260915T0030Z-5d1c)", (unsigned long long)size);
+    oops_winsys_log("memory description: 0x%llx bytes from the kernel, bounding the one pool "
+                    "both direct-memory calls allocate from (REQ-20260915T0030Z-5d1c, measured)",
+                    (unsigned long long)size);
     return 0;
 }

@@ -26,6 +26,7 @@ against. The status column stays the review queue.
 | 🟢 | D009 | [The display adopts Mesa's buffer, not the other way round](decisions/D009-the-display-adopts-mesas-buffer-not-the-other-way-round.md) | decided | 2026-09-17 |
 | 🟢 | D010 | [The platform shim is a DRI loader, and EGL waits](decisions/D010-the-platform-shim-is-a-dri-loader-and-egl-waits.md) | decided | 2026-09-17 |
 | 🟢 | D011 | [The maths is FreeBSD's own msun, built for the target, double and float only](decisions/D011-the-maths-is-freebsds-own-msun-double-and-float-only.md) | decided | 2026-09-17 |
+| 🟢 | D012 | [The present path round-trips through linear, and the fix is staged behind a measurement](decisions/D012-the-present-path-round-trips-through-linear-for-nothing.md) | decided | 2026-09-21 |
 
 | | meaning |
 |---|---|

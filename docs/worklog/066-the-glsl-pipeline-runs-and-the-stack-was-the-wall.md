@@ -69,10 +69,15 @@ compared them would conclude something had broken.
 
 ## What is next
 
-- **A second run of the same binary**, which is all that is left to turn `0x5188ddb7` from a value
-  into a gate. The frame is deterministic by construction, so this is a confirmation, not an
-  experiment - but it has not been done, and unit 6's gate is not closed until it has.
-- **`REQ-7e21`, the performance half of that same gate.** `flip 1: tile=8077 submit=64 total=8141`
+- ~~A second run of the same binary~~ - **done on 2026-09-21, and the hash held.** A fresh process
+  (`pid 966` against run 2's `952`), an overnight gap and a close through the shell UI in between,
+  the same eboot neither rebuilt nor redeployed: `frame-hash 0x5188ddb7`, `mod-pixels 373248`,
+  `centre-pixel 0xff404080`, `corner-pixel 0xff0d0d14` - every one identical. The flip timing moved
+  (8131 us against 8141 us) and the hash did not, which is what makes the comparison worth
+  something: a varying measurement beside a fixed one says the runs were independent rather than
+  the capture stale. **Unit 6's "draws and hashes a known frame" is met.**
+- **D012 step 3, the performance half of that same gate** *(written here as `REQ-7e21`, which is
+  oops-gl's identifier - see D012)*. `flip 1: tile=8077 submit=64 total=8141`
   is 8.14 ms, and that is only the display half; the `glReadPixels` detile feeding it is not in the
   number and is not yet measured. Rendering straight into a scanout buffer removes both.
 - **Unit 8.** One triangle is one triangle: no textures, no depth, no blending. The bounded CTS

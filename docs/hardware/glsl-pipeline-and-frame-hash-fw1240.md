@@ -1,9 +1,11 @@
 # The programmable pipeline runs, and the frame hashes
 
-**2026-09-20** · firmware 12.40 · the same retail unit as the earlier records · roadmap unit 6
+**2026-09-20 / 2026-09-21** · firmware 12.40 · the same retail unit as the earlier records ·
+roadmap unit 6
 
-Two runs of `dri-probe` (`DRIP00001`) on the same evening. The first found a fault and the second,
-with the fault fixed, ran the whole probe to a presented frame. Both were deployed with
+Three runs of `dri-probe` (`DRIP00001`). The first found a fault; the second, with the fault fixed,
+ran the whole probe to a presented frame; the third, the next morning, reproduced its pixel hash
+exactly and so turned that hash into unit 6's gate. The first two were deployed with
 `pros restore` to `/data/homebrew/DRIP00001` and started with `pros launch`, with `pros logs`
 subscribed **before** the launch - a parked title emits one burst and goes silent, so the
 subscription has to be listening first.
@@ -88,6 +90,33 @@ Captured verbatim from `pros logs`; only the surrounding system-log noise is rem
 [DRIP00001:DRI-PROBE] idle and finished - close this title from the host
 ```
 
+## Run 3, 2026-09-21: the hash is stable, so it is a gate
+
+The same eboot again - not rebuilt, not redeployed, `v2026-09-20 23:34` still on disk at
+`/data/homebrew/DRIP00001`. Run 2's instance was parked holding the big-app slot, so the first
+attempt at this was refused outright with `sceSystemServiceLaunchApp: Resource temporarily
+unavailable`; it ran once the title had been closed from the shell UI's own Close, which is the
+only thing that ends a `big-app` (Prosperous `-b1e4`).
+
+That makes it a genuinely separate run: a different process (`pid 966`, against run 2's `952`), an
+overnight gap, and a fresh launch through the shell. Every pixel measurement came back identical.
+
+| | run 2 | run 3 |
+|---|---|---|
+| `frame-hash` | `0x5188ddb7` | `0x5188ddb7` |
+| `mod-pixels` | 373248 | 373248 |
+| `centre-pixel` | `0xff404080` | `0xff404080` |
+| `corner-pixel` | `0xff0d0d14` | `0xff0d0d14` |
+| `flip 1` total | 8141 us | 8131 us |
+
+**The flip timing moved and the hash did not.** That is the useful part of the comparison: a
+measurement that varies run to run sits beside one that does not, so the identical hash is evidence
+of a reproducible frame rather than of a stale capture or a log read twice.
+
+`0x5188ddb7` is therefore an oracle, not a proposal, and roadmap unit 6's "draws and hashes a known
+frame" is met. The unit's other half - the swap costing milliseconds - is untouched and is D012
+step 3.
+
 ## The frame
 
 | | |
@@ -132,15 +161,12 @@ tied to that title's clear colour and its cube.
 
 ## What it does not establish
 
-- **The hash is not yet a gate.** One run produces a value; a gate needs it to be *stable*. The
-  frame is deterministic by construction - fixed clear, fixed vertices, fixed colours - so a second
-  run of the same binary must return `0x5188ddb7`, but that second run has not happened. Until it
-  has, this is an oracle proposed, not confirmed.
 - **The performance half of unit 6's gate is untouched.** The roadmap asks for a swap costing
   milliseconds. `flip 1: tile=8077 submit=64 total=8141` is microseconds - 8.14 ms - but that is
   the **display half only**: the CPU tile plus the flip submit. The `glReadPixels` detile that
-  feeds it is not in that number and is not measured here. `REQ-7e21` (render straight into a
-  scanout buffer) is what removes both, and it remains open.
+  feeds it is not in that number and is not measured here. D012 step 3 (render straight into a
+  scanout buffer) is what removes both, and it remains open. *(This record said `REQ-7e21` when it
+  was written; that identifier is oops-gl's - see D012.)*
 - **Nothing about this probe's own cost is production cost.** It takes two full-frame readbacks,
   one for the hash and one inside the present. The hash's readback is a measurement, not something
   a title would pay.
