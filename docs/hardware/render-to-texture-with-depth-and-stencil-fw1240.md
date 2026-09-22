@@ -65,11 +65,37 @@ this run the shell logged seven `PostExternalKeyboardReceived UserId=0x1ea2f4d9
 characterCode=0x32` - a `2`, which this demo does not bind - so keystrokes reach the system and a
 keyboard is attached.
 
-The title does not receive them. Confirmed by the owner the same evening: no key has any effect
-in any demo, across all four runs. Filed as `REQ-20260922T1905Z-9c31` on the obSCEne bus - does a
-`big-app` ever get keyboard samples, and what grants it - because the two -1s are not the shape a
-platform refusal usually takes here, and a polled `sceKeyboardReadState` might answer where an
-event queue does not.
+The title does not receive them. Confirmed by the owner the same evening: no key has any effect in
+any demo, across all four runs.
+
+**The cause is not on the console, and the two -1s above are a red herring.** `oops_keyboard_read`
+- the function `glut_pump_keyboard` calls every frame, and the only route a character has into a
+GLUT program - refuses on its third line:
+
+```c
+/* oops-sdk/src/input/keyboard.c:28 */
+#define OOPS_KEY_RECORD_FIELDS_CONFIRMED 0
+/* …:253 */
+if (!OOPS_KEY_RECORD_FIELDS_CONFIRMED) {
+    return OOPS_KEYBOARD_ELAYOUT;
+}
+```
+
+No read is attempted. `sceKeyboardReadState` is never called, so what it would have returned, and
+whether privilege and focus mattered, is unmeasured - the -1s are logged by `oops_keyboard_init`
+and nothing stores, tests or returns them.
+
+This is oops-sdk's **capture gate**, and it is the SDK behaving correctly rather than a bug:
+`API_REFERENCE.md:421` describes the same arrangement for video and audio decode - *"the settled
+interface but return `ELAYOUT` until an obSCEne struct-layout probe confirms the layouts"* - and
+`src/input/mouse.c:24` carries it for the mouse. An interface that would have to guess at a struct
+layout refuses instead, which is D001 applied to a record shape.
+
+The open question is whether this particular gate is **stale**: eight lines below it the record is
+introduced as *"Verified 96-byte PS5 native hardware keyboard report layout … hardware
+measurements"*, with every offset spelled out. Either the comment overstates or the gate was never
+flipped after the measurement landed. Asked as `REQ-20260922T1900Z-3f6a` (oops-sdk: which is it?)
+and `REQ-20260922T1905Z-9c31` (obSCEne: capture the record, and the mouse's with it).
 
 **The pad is not affected and is the way in.** `oops-sdk/src/gl/glut.c:369` synthesises GLUT
 keyboard and special events from pad buttons, and OPTIONS - which ends every run on this title -
