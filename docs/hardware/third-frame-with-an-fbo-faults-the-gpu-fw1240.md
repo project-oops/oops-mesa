@@ -70,13 +70,49 @@ than a shader touching a surface. `GUI_ACTIVE`, `CP`, `CPF`, `CPG`, `DB` and `CB
 busy; `TA`, `SX`, `SPI`, `PA` and `SC` idle, which is consistent with the fault landing before any
 shader ran.
 
-**Guessed, and it needs a probe rather than another run.** The obvious shape is a buffer freed or
-unmapped while a submission still referenced it - the FBO's attachments are the only allocations
-in this program with a lifetime that spans frames and is managed by Mesa rather than by the
-winsys. `src/winsys/buffers.c` and `src/winsys/submit.c` are where that would live.
+**Guessed, and wrong.** The first reading was a buffer freed or unmapped while a submission still
+referenced it. Two instrumented runs disproved it and found something else on the way.
+
+### What the instrumented runs settled
+
+`src/winsys/buffers.c` was made to log every VA map, unmap and close, and `submit.c` to log the
+address of every instruction buffer it submits. Three things came out, in order.
+
+**A real bug, found and fixed, that is not this one.** The size fallback used to create GL at the
+requested extent, find the display had refused, destroy it and create it again - two Mesa devices
+in one process. The second re-initialised with a VA allocator starting from the same base while
+the first's teardown had leaked `gem 5` at `0x400600000` and `gem 7` at `0x400700000`, so the
+8.8 MB scanout buffer was handed an address a live mapping still held. Fixed in `b7eeab1` by
+asking the display before building GL; `e087968` makes any future collision say so by name. **The
+fault is unchanged**, the address space is now provably clean, and no collision is reported - so
+that was a genuine defect sitting beside this one, not its cause.
+
+**The faulting address is never unmapped.** `0x400020000` is inside buffer 2, mapped at
+`0x400000000` for 2 MiB and never released for the life of the process.
+
+**Buffer 2 is the instruction-buffer pool, and the fault is one page past the IB being executed:**
+
+```
+submitting IB at 0x400000000, 17088 bytes    <- frame 1, presents
+submitting IB at 0x400018000, 16160 bytes    <- frame 2, presents
+submitting IB at 0x40001c000,  7936 bytes    <- frame 3, submission 9
+Protection fault … client:CPG(6) access:Read … addr(VA): 0x0000000400020000
+submission 9 did not retire; fence still 0x11111111
+```
+
+The IB runs `0x40001c000`–`0x40001DF00`. The fault is 8.5 KiB past its end and exactly
+`OOPS_WINSYS_PAGE` (16 KiB) past its start, page-aligned. `submit_one` passes `bytes / 4` with no
+rounding, so the size handed to the driver is exact.
+
+So the command processor read past the end of the buffer it was given, at an address our own
+bookkeeping says is mapped. Either the mapping is not reaching the GPU page table for the whole
+2 MiB, or the CP reads somewhere we never mapped and the address is a coincidence of layout.
+That is a hardware-behaviour question and it is
+[`REQ-20260922T2230Z-6e81`](../../../obscene) on the obSCEne bus: what the CP reads past a DCB's
+declared size, and what terminates one.
 
 Nothing here is a diagnosis. It is the first frame-3 failure recorded, with the register state
-that came with it.
+that came with it and the two readings it has since eliminated.
 
 ## What this does not affect
 
