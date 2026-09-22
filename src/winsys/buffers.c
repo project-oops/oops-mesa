@@ -235,8 +235,15 @@ int oops_winsys_gem_close(uint32_t handle)
     }
     /* The other half of the VA log above: a close unmaps and frees without the VA op, so a
      * buffer can leave the address space through here without `VA unmap` ever being printed. */
-    oops_winsys_log("GEM close: buffer %u at 0x%llx, %llu bytes", handle,
-                    (unsigned long long)bo->gpu_va, (unsigned long long)bo->size);
+    /* A close that follows its own VA unmap prints 0x0, because the unmap cleared the address.
+     * That is correct and reads like an error, so it says what it means instead. */
+    if (bo->gpu_va) {
+        oops_winsys_log("GEM close: buffer %u at 0x%llx, %llu bytes", handle,
+                        (unsigned long long)bo->gpu_va, (unsigned long long)bo->size);
+    } else {
+        oops_winsys_log("GEM close: buffer %u, already unmapped, %llu bytes", handle,
+                        (unsigned long long)bo->size);
+    }
     if (bo->cpu_ptr) {
         oops_mem_unmap(bo->cpu_ptr, (size_t)bo->size);
     }
@@ -368,6 +375,41 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg)
     switch (arg->operation) {
     case AMDGPU_VA_OP_MAP: {
         uint64_t size = arg->map_size ? round_up_page(arg->map_size) : bo->size;
+
+        /*
+         * **Does this address range already belong to a live buffer?**
+         *
+         * On Linux the kernel owns the GPU address space and refuses a map that collides. Here
+         * nothing did, and the collision is not hypothetical: on 2026-09-22 `fbotexture` asked
+         * for 400x400, could not scan it out, and the platform tore the GL context down and built
+         * a new one. The teardown released most buffers and **leaked two** - gem 5 at
+         * 0x400600000 and gem 7 at 0x400700000 - and the replacement Mesa device, which
+         * re-initialises with a VA allocator that starts from the same base, handed 0x400600000
+         * straight back out for an 8.8 MB scanout buffer. The buffer being flipped to the screen
+         * every frame shared an address with a live mapping nobody had released, and the run
+         * ended in a GPU protection fault.
+         *
+         * This does not fix the leak; it makes the leak *visible* the first time it matters
+         * rather than at a fault address with no name on it (CLAUDE.md principle 4). The map is
+         * still performed, because refusing it would turn a working configuration into a dead one
+         * on a path Mesa has no way to retry - and because which of the two buffers is the wrong
+         * one is not ours to decide.
+         */
+        for (uint32_t i = 0; i < OOPS_WINSYS_MAX_BO; i++) {
+            const struct oops_winsys_bo *other = &s_bo[i];
+            if (!other->live || other == bo || other->gpu_va == 0) {
+                continue;
+            }
+            if (arg->va_address < other->gpu_va + other->size &&
+                other->gpu_va < arg->va_address + size) {
+                oops_winsys_log(
+                    "VA COLLISION: buffer %u at 0x%llx (%llu bytes) overlaps live buffer %u at "
+                    "0x%llx (%llu bytes) - one of them is leaked",
+                    arg->handle, (unsigned long long)arg->va_address, (unsigned long long)size,
+                    (unsigned)(i + 1u), (unsigned long long)other->gpu_va,
+                    (unsigned long long)other->size);
+            }
+        }
         if (oops_mem_batch_map((void *)(uintptr_t)arg->va_address, bo->phys,
                                (size_t)size, OOPS_WINSYS_PAGE, prot) != 0) {
             oops_winsys_log("mapping buffer %u at 0x%llx refused", arg->handle,

@@ -227,6 +227,18 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
             if (!ib || ib->ib_bytes == 0) {
                 break;
             }
+            /*
+             * The address the command processor will fetch from, said before it fetches.
+             *
+             * A GPU protection fault names an address and a client, and when that client is CPG
+             * the address is usually either this buffer or something a packet inside it points
+             * at. Those two want different fixes and the log could not tell them apart:
+             * `fbotexture` faulted at 0x400020000 on 2026-09-22 with no unmap of that address
+             * anywhere in the run, which leaves "the IB itself" and "a resource the IB names" as
+             * the two live readings. This line settles which.
+             */
+            oops_winsys_log("submitting IB at 0x%llx, %u bytes",
+                            (unsigned long long)ib->va_start, ib->ib_bytes);
             if (submit_one(ib->va_start, ib->ib_bytes) != 0) {
                 oops_winsys_log("the driver refused an instruction buffer of %u bytes",
                                 ib->ib_bytes);
