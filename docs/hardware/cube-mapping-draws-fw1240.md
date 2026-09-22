@@ -49,9 +49,18 @@ anything being wrong:
 - the environment is a maximum-contrast checkerboard, which is the worst case for that sweep
 
 It has **not** been compared against the same demo on a desktop, so this is a mechanism and not a
-verdict. The check that would settle it is cheap and is not done here: the demo's `m` key cycles
-the minification filter and its `s` key toggles `GL_TEXTURE_CUBE_MAP_SEAMLESS`, and a silhouette
-that changes with neither is geometry rather than sampling.
+verdict. The checks that would settle it are cheap, need no rebuild, and are not done here -
+`cubemap` takes keys, and `sceKeyboardOpen` succeeds on this title:
+
+| key | what it does (`upstream/src/demos/cubemap.c:336`) | what it would tell us |
+|---|---|---|
+| `f` | cycles the 12 min/mag filter pairs | a fringe that survives `GL_LINEAR_MIPMAP_LINEAR` is not a sampling artefact |
+| `Z` | pushes the eye out to 90 units | faceting shrinks with the sphere; sampling noise does not |
+| `m` | switches texgen between `GL_REFLECTION_MAP` and `GL_NORMAL_MAP` | normal-map texgen does not sweep at the silhouette, so the fringe should vanish - and if it does, the geometry is fine |
+| `s` | toggles `GL_TEXTURE_CUBE_MAP_SEAMLESS` | whether face-edge seams are part of it |
+
+`m` is the discriminating one, and it is also a second measurement for free:
+`GL_NORMAL_MAP_ARB` is a texgen mode nothing here has exercised.
 
 ## Presentation
 
