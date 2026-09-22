@@ -84,3 +84,4 @@ Entries live one per file under `worklog/`; this table indexes them and is kept 
 | - | [070. The CPU stops touching the pixels](worklog/070-the-cpu-stops-touching-the-pixels.md) |
 | - | [071. Two buffers, and the pacing that had to come with them](worklog/071-two-buffers-and-the-pacing-that-had-to-come-with-them.md) |
 | - | [072. The clang 21 bump, and what it did not buy](worklog/072-the-clang-21-bump-and-what-it-did-not-buy.md) |
+| - | [073. The bump is verified, and the oracle had a gap in it](worklog/073-the-bump-is-verified-and-the-oracle-had-a-gap.md) |

@@ -125,8 +125,30 @@ no longer true and the second has been answered.
   repository whose pin could not be wired - see the note in the worklog entry. That failure is
   the gate working.
 
-**The hardware acceptance in worklog 067's plan - frame hashes `0x9dbfe189` and `0x5188ddb7`
-unchanged, `mesa-cube` still at 16682 us/frame - has NOT been run.** Nothing here claims the
-bump is verified on hardware; it claims the build is reproduced and the C++ blocker measured.
-Until those two hashes come back from a console, this entry is a toolchain change with a host-side
-justification, and unit 8 stays where worklog 067 left it.
+**The hardware acceptance in worklog 067's plan has been run, on 2026-09-22, and it passed** -
+[the record](../hardware/the-clang-21-bump-verified-fw1240.md), and
+[worklog 073](../worklog/073-the-bump-is-verified-and-the-oracle-had-a-gap.md). `dri-probe`
+returns `0x5188ddb7` with the same 373248 modified pixels and the same centre and corner values;
+`mesa-cube` holds 59.94 fps with no CPU pixel work, no presentation fallbacks and no faults. The
+bump is verified for oops-mesa, and unit 8's toolchain prerequisite is met on hardware rather than
+only in the container.
+
+Two corrections to what this entry assumed while it was being written:
+
+- **`0x9dbfe189` was never this repository's to answer.** Worklog 067 listed it beside
+  `0x5188ddb7` as one of the collection's two oracles and it reads here as though both were
+  oops-mesa's acceptance. It is gl1-cube's - oops-gl's own stack, with no Mesa in it - as
+  [the GLSL record](../hardware/glsl-pipeline-and-frame-hash-fw1240.md) already says. Verifying it
+  belongs to whoever owns that title.
+- **`build/mesa/meson-logs/meson-log.txt` says clang 18 and is wrong.** Meson wrote it at
+  configure time in an earlier session and did not rewrite it for the rebuild, so the file most
+  likely to be reached for when checking "which compiler built this" answers with the old one.
+  `readelf -p .comment` on an object gives `21.1.8 (++...2078da43e25a...)`, the same llvm-project
+  revision oops-apps pins for libc++.
+
+What the run also showed, and what this decision cannot take credit for avoiding: `mesa-cube`
+draws black, and it is not the compiler. The cause is a texture-unit state leak in an overlay
+added to the title after the bump, filed as `REQ-20260922T0040Z-c93d` against oops-sdk. It is
+recorded here because `0x5188ddb7` held bit-for-bit through a change that visibly broke the other
+title on the same panel - a hash is an oracle only for the path it covers, and this one does not
+cover a texture.

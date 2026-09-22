@@ -78,11 +78,16 @@ That cost about twenty minutes of believing the lock and disbelieving the direct
 
 ## What this does not claim
 
-**No hardware ran.** The acceptance worklog 067 set - frame hashes `0x9dbfe189` and `0x5188ddb7`
-unchanged, `mesa-cube` still 16682 us/frame at 59.94 fps with 0 fallbacks and 0 faults - has not
-been tested, because a console run happens when the owner asks for one. Until those come back,
-this is a reproduced build and a measured C++ blocker, not a verified bump. A changed hash would
-be a finding and nobody has looked.
+**No hardware ran** *(when this entry was written; the run came the next day and passed - see
+[073](073-the-bump-is-verified-and-the-oracle-had-a-gap.md))*. The acceptance worklog 067 set -
+frame hashes `0x9dbfe189` and `0x5188ddb7` unchanged, `mesa-cube` still 16682 us/frame at 59.94 fps
+with 0 fallbacks and 0 faults - has not been tested, because a console run happens when the owner
+asks for one. Until those come back, this is a reproduced build and a measured C++ blocker, not a
+verified bump. A changed hash would be a finding and nobody has looked.
+
+*(073: `0x5188ddb7` came back bit-exact and the pacing held. `0x9dbfe189` turned out not to be
+this repository's to answer - it is gl1-cube's, no Mesa in it. And a change that did not move the
+hash at all was meanwhile drawing the cube black, which is the more useful half of that entry.)*
 
 **`oops-sdk` is not pinned.** `.claude/settings.json` denies read and write on
 `oops-sdk/Makefile` and `oops-sdk.mk`, which are the two files the guard would go in. The gate
