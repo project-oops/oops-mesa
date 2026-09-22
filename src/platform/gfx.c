@@ -38,8 +38,6 @@ oops_gfx_t *oops_gfx_create(const oops_gfx_desc_t *desc)
     const uint32_t h = (desc != NULL && desc->height != 0u) ? desc->height
                                                            : OOPS_DISPLAY_DEFAULT_HEIGHT;
 
-    struct oops_gl *gl = oops_gl_create(w, h);
-
     /*
      * A requested size this output cannot scan out falls back to the one it can.
      *
@@ -70,25 +68,57 @@ oops_gfx_t *oops_gfx_create(const oops_gfx_desc_t *desc)
      * scanout refused, no fallback fired, and the run produced a context nothing could show.
      * `gears` had fallen back correctly only because *its* 300x300 create failed outright, which
      * made the broken test look like a working one.
+     *
+     * # Why the display is asked first, rather than GL built twice
+     *
+     * The first version of this fallback created GL at the requested size, found the display had
+     * refused, destroyed the whole thing and created it again. That works and it is how
+     * `fbotexture` reached a first frame - but it builds **two Mesa devices in one process**, and
+     * the second one is not a clean slate. `amdgpu_device_initialize` runs again with a GPU
+     * address allocator that starts from the same base, while the first device's buffers are only
+     * mostly gone: the teardown on 2026-09-22 leaked `gem 5` at 0x400600000 and `gem 7` at
+     * 0x400700000, and the replacement device handed 0x400600000 straight back out for an 8.8 MB
+     * scanout buffer. The buffer flipped to the screen every frame shared an address with a live
+     * mapping nobody had released. `src/winsys/buffers.c` now names that collision when it
+     * happens; this removes the occasion for it.
+     *
+     * **A probe is possible because the output can be re-opened.** VideoOut buffer registration is
+     * single-shot per handle (oops-sdk `agc_display.c:346`, obSCEne `REQ-20260921T1202Z-9a4c`), so
+     * asking twice on one handle would be refused - but `agc_display_close` calls
+     * `sceVideoOutClose`, which releases the handle, and the next open gets a fresh slot. That is
+     * why the destroy-and-retry worked at all, and it is what lets the question be asked before
+     * Mesa exists rather than after.
+     *
+     * The test is `oops_display_is_ready`, which is the same test `dri_loader.c:716` applies to
+     * its own adopting open - so a probe that says yes and a GL create that then says no would be
+     * a disagreement between two calls to one function, not a difference of opinion.
      */
-    if (gl != NULL && oops_gl_display(gl) == NULL &&
-        (w != OOPS_DISPLAY_DEFAULT_WIDTH || h != OOPS_DISPLAY_DEFAULT_HEIGHT)) {
-        oops_gl_destroy(gl);
-        gl = NULL;
+    uint32_t use_w = w;
+    uint32_t use_h = h;
+
+    if (w != OOPS_DISPLAY_DEFAULT_WIDTH || h != OOPS_DISPLAY_DEFAULT_HEIGHT) {
+        oops_display_t *probe = oops_display_open(OOPS_DISPLAY_BACKEND_AUTO, w, h);
+        const int scannable = (probe != NULL) && (oops_display_is_ready(probe) != 0);
+        if (probe != NULL) {
+            oops_display_close(probe);
+        }
+        if (!scannable) {
+            /* `oops_klog` and not `oops_winsys_log`: the first attempt of this run said nothing
+             * through the winsys logger, and a fallback nobody can see in the log is the same
+             * class of defect as the one it is fixing. This is the call the lines either side of
+             * it use. */
+            char msg[160];
+            (void)snprintf(msg, sizeof msg,
+                           "%ux%u would not scan out; opening the display's own %ux%u instead",
+                           w, h, (unsigned)OOPS_DISPLAY_DEFAULT_WIDTH,
+                           (unsigned)OOPS_DISPLAY_DEFAULT_HEIGHT);
+            oops_klog("OOPS-GL", msg);
+            use_w = OOPS_DISPLAY_DEFAULT_WIDTH;
+            use_h = OOPS_DISPLAY_DEFAULT_HEIGHT;
+        }
     }
 
-    if (gl == NULL && (w != OOPS_DISPLAY_DEFAULT_WIDTH || h != OOPS_DISPLAY_DEFAULT_HEIGHT)) {
-        /* `oops_klog` and not `oops_winsys_log`: the first attempt of this run said nothing
-         * through the winsys logger, and a fallback nobody can see in the log is the same class
-         * of defect as the one it is fixing. This is the call the lines either side of it use. */
-        char msg[160];
-        (void)snprintf(msg, sizeof msg,
-                       "%ux%u would not scan out; falling back to the display's own %ux%u",
-                       w, h, (unsigned)OOPS_DISPLAY_DEFAULT_WIDTH,
-                       (unsigned)OOPS_DISPLAY_DEFAULT_HEIGHT);
-        oops_klog("OOPS-GL", msg);
-        gl = oops_gl_create(OOPS_DISPLAY_DEFAULT_WIDTH, OOPS_DISPLAY_DEFAULT_HEIGHT);
-    }
+    struct oops_gl *gl = oops_gl_create(use_w, use_h);
 
     if (gl == NULL) {
         /* oops_gl_create already logged the step it stopped on. */
