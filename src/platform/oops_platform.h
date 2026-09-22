@@ -86,6 +86,14 @@ void oops_gl_extent(const struct oops_gl *gl, uint32_t *width, uint32_t *height)
 /* Tear down the context, the drawable, the screen and the buffers, in that order. Safe on NULL. */
 void oops_gl_destroy(struct oops_gl *gl);
 
+/*
+ * The display this opened. It belongs to the `oops_gl` and is closed by `oops_gl_destroy`; a
+ * caller uses it to reach the display directly - the input pump, a CPU overlay surface - and does
+ * not close it. Returns NULL on NULL. Declared with the bare struct so this header need not pull
+ * in <oops/display.h>; a caller that uses the result includes it anyway.
+ */
+struct oops_display *oops_gl_display(struct oops_gl *gl);
+
 #ifdef __cplusplus
 }
 #endif

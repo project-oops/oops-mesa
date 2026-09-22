@@ -1084,3 +1084,8 @@ void oops_gl_extent(const struct oops_gl *gl, uint32_t *width, uint32_t *height)
         *height = gl->height;
     }
 }
+
+struct oops_display *oops_gl_display(struct oops_gl *gl)
+{
+    return (gl != NULL) ? gl->display : NULL;
+}

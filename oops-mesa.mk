@@ -68,7 +68,8 @@ OOPS_MESA_SRCS := \
     $(OOPS_MESA_DIR)/src/runtime/abi.c \
     $(OOPS_MESA_DIR)/src/runtime/libc_absent.c \
     $(OOPS_MESA_DIR)/src/runtime/stderr_to_klog.c \
-    $(OOPS_MESA_DIR)/src/platform/dri_loader.c
+    $(OOPS_MESA_DIR)/src/platform/dri_loader.c \
+    $(OOPS_MESA_DIR)/src/platform/gfx.c
 
 # `src/platform/dri_loader.c` joined the build on 2026-09-17, after two separate reasons for
 # keeping it out were each dealt with.
