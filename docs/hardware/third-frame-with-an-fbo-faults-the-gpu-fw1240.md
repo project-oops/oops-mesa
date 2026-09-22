@@ -33,10 +33,28 @@ console recovered on its own.
 
 ## Why this has not been seen before
 
-**Every previous run on this console drew one frame.** `gears` animates and is fine over many
-frames, but `gears` has no framebuffer object. `fbotexture` has one and, until the keyboard
-worked, could never be told to draw a second. So this is the first multi-frame run *with* an FBO,
-and the wall was standing behind a dead keyboard the whole time.
+**Every previous run on this console drew one frame.** `fbotexture` has an FBO and, until the
+keyboard worked, could never be told to draw a second. So this is the first multi-frame run *with*
+one, and the wall was standing behind a dead keyboard the whole time.
+
+### The control, run immediately after
+
+`gears`, built from the same tree and the same SDK, on the same firmware. It animates from its
+first frame and has **no framebuffer object**:
+
+```
+present us: flush=44498 read=0 mirror=0 disp=18429 total=62927   (first frame, shader compile)
+present us: flush=4713  read=0 mirror=0 disp=12    total=4725
+present us: flush=4731  read=0 mirror=0 disp=12    total=4743
+…
+present us: flush=1612  read=0 mirror=0 disp=11    total=1623
+```
+
+It ran to over 500 ioctls with no fault, settling to ~1.6 ms a present. So multi-frame
+submission is sound, and so is everything `fbotexture` shares with it: the same winsys, the same
+fence, the same keyboard and input path per frame, the same scanout. **The FBO is the only
+variable left**, which is what makes this worth chasing in `src/winsys/` rather than anywhere
+else.
 
 That makes it a new class rather than a regression: the single-frame FBO path is
 [measured and correct](render-to-texture-with-depth-and-stencil-fw1240.md), and frame 2 presents

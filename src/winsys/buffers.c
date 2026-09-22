@@ -233,6 +233,10 @@ int oops_winsys_gem_close(uint32_t handle)
     if (!bo) {
         return -EINVAL;
     }
+    /* The other half of the VA log above: a close unmaps and frees without the VA op, so a
+     * buffer can leave the address space through here without `VA unmap` ever being printed. */
+    oops_winsys_log("GEM close: buffer %u at 0x%llx, %llu bytes", handle,
+                    (unsigned long long)bo->gpu_va, (unsigned long long)bo->size);
     if (bo->cpu_ptr) {
         oops_mem_unmap(bo->cpu_ptr, (size_t)bo->size);
     }
@@ -371,10 +375,24 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg)
             return -ENOMEM;
         }
         bo->gpu_va = arg->va_address;
+        /*
+         * Mapping and unmapping were silent unless they failed, which is the wrong half to log.
+         * A GPU protection fault names an address and nothing else, so the question it asks -
+         * *was this ever mapped, and was it still mapped when the packet ran* - could not be
+         * answered from a log at all. `fbotexture` faulted at 0x400020000 on its third frame on
+         * 2026-09-22 and these three lines are what turn that address into a buffer.
+         *
+         * One line per VA operation, not per frame: Mesa maps during setup and on resize, so this
+         * is tens of lines in a run, against the ~500 ioctls a run already prints.
+         */
+        oops_winsys_log("VA map: buffer %u at 0x%llx, %llu bytes", arg->handle,
+                        (unsigned long long)arg->va_address, (unsigned long long)size);
         return 0;
     }
     case AMDGPU_VA_OP_UNMAP:
         if (bo->gpu_va) {
+            oops_winsys_log("VA unmap: buffer %u at 0x%llx, %llu bytes", arg->handle,
+                            (unsigned long long)bo->gpu_va, (unsigned long long)bo->size);
             oops_mem_unmap((void *)(uintptr_t)bo->gpu_va, (size_t)bo->size);
             bo->gpu_va = 0;
         }
