@@ -91,11 +91,29 @@ interface but return `ELAYOUT` until an obSCEne struct-layout probe confirms the
 `src/input/mouse.c:24` carries it for the mouse. An interface that would have to guess at a struct
 layout refuses instead, which is D001 applied to a record shape.
 
-The open question is whether this particular gate is **stale**: eight lines below it the record is
-introduced as *"Verified 96-byte PS5 native hardware keyboard report layout … hardware
-measurements"*, with every offset spelled out. Either the comment overstates or the gate was never
-flipped after the measurement landed. Asked as `REQ-20260922T1900Z-3f6a` (oops-sdk: which is it?)
-and `REQ-20260922T1905Z-9c31` (obSCEne: capture the record, and the mouse's with it).
+**The gate is stale, and the proof was inside the collection.** `keyboard.c` offers the keyboard
+twice. `oops_keyboard_read` returns characters and is gated. `oops_keyboard_poll_buttons` returns
+an `OOPS_BUTTON_*` bitmask, reads the same record through the same `sceKeyboardReadState` call,
+and has **no gate at all** - and `oops-apps`' SeaShell uses it
+(`src/oops-utilities/seashell/home_main.c:953`), with a shipped keyboard-as-pad map in its
+`CONTROLS.md`. Its navigation works on this hardware.
+
+So SeaShell has been validating the layout all along. Its decoder covers 22 distinct HID usage
+codes, which cannot come out of a wrong offset:
+
+| field | offset | proven by SeaShell |
+|---|---|---|
+| `intercepted` | 0x08 | yes - `is_usable_sample` rejects on it |
+| `connected` | 0x10 | yes |
+| `keycodes[16]` | 0x20 | yes - 22 codes decode correctly |
+| `modifiers` | 0x1c | **no** - nothing in the collection touches it |
+
+One field stands between refusing everything and working. `REQ-20260922T1900Z-3f6a` asks oops-sdk
+to open the gate now with `modifiers` reported as 0 - which yields every lowercase letter, digit,
+arrow and function key, and withholds only shifted characters, since `glut_usage_ascii`
+(`oops-sdk/src/gl/glut.c:268`) already returns 0 for a key it cannot express.
+`REQ-20260922T1905Z-9c31` asks obSCEne for that one field, and for the mouse record, which has no
+SeaShell to vouch for it.
 
 **The pad is not affected and is the way in.** `oops-sdk/src/gl/glut.c:369` synthesises GLUT
 keyboard and special events from pad buttons, and OPTIONS - which ends every run on this title -
