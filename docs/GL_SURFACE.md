@@ -74,6 +74,29 @@ These are command-stream and memory features. They reach the GFX ring through th
 | 4.5 | direct state access, `glGetGraphicsResetStatus` | API-level; reset state reads `CTX`, which is answered |
 | 4.6 | SPIR-V ingestion, anisotropic filtering, `glPolygonOffsetClamp` | compiler and sampler state |
 
+**And there is a wall in front of the table that this document missed on its first writing: the
+headers.**
+
+A `USE_MESA` title compiles with `-I<oops-sdk>/include` **ahead of** `-I<oops-mesa>/mesa/include`
+(`oops-apps/common/app.mk`), so `<GL/gl.h>` resolves to **oops-sdk's**, which covers GL 1.x and
+2.0 (oops-sdk#D008). `<GL/glext.h>` has no oops-sdk counterpart, so that one *is* Mesa's - and
+Mesa's hides every prototype behind `GL_GLEXT_PROTOTYPES`, which nothing defines by default. The
+practical result, found by building mesa-demos on 2026-09-22:
+
+```
+GL_NUM_EXTENSIONS   defined      (an enum, from Mesa's glext.h)
+glGetStringi        undeclared   (a prototype, behind GL_GLEXT_PROTOTYPES)
+```
+
+So a title reaching for a GL 3.0+ entry point gets a compile error from a driver that reports
+4.6, and the error reads like a header bug. It is not one; it is two header sets from two
+projects in front of one driver, describing different versions of OpenGL.
+
+**This does not move anything from "reachable" to "refused"** - `#define GL_GLEXT_PROTOTYPES 1`
+before the includes is the whole fix, and nothing in the winsys or the driver is involved. But it
+does mean **no row above 2.0 in the table below has ever been compiled, let alone run**, and the
+step between them is a line a porter has to know to write. It is in oops-sdk's `PORTING.md` now.
+
 **Reachable is not working.** Every row here is an argument that nothing *structurally* refuses
 it, and none of them is evidence that it draws the right pixels. That evidence is unit 8's job,
 and `mesa-demos` is the cheap approximation until then.
