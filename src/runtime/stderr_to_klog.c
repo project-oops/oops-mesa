@@ -206,6 +206,40 @@ int vfprintf(FILE *stream, const char *fmt, va_list ap)
     return emit_formatted(stream, fmt, ap);
 }
 
+/*
+ * `printf` and `vprintf`, which this file did without until a ported program ran.
+ *
+ * Everything above was counted against **Mesa's** archives, and Mesa never calls plain `printf`:
+ * it names a stream (`fprintf(stderr, ...)`) or the compiler lowers a no-conversion call to
+ * `puts`. So for a year the set above was complete, because Mesa was the only thing writing.
+ *
+ * A **ported program** is not like that. `mesa-demos`' `glinfo` prints its whole answer with
+ * `printf("GL_VERSION: %s\n", ...)` - a `%s` conversion, so clang keeps it as `printf` rather
+ * than rewriting it to `puts` - and on 2026-09-22 it ran correctly on hardware and produced
+ * **nothing in the log**. The title started, brought up GL, queried the driver, printed, and
+ * parked; every line it printed went into the void, because `printf` was the one name not
+ * interposed.
+ *
+ * That is the failure this whole file exists to prevent, arriving through the one door nobody had
+ * counted - and it will hit every future port, because printing with `printf` is what a program
+ * written for a terminal does.
+ */
+int printf(const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+
+    va_start(ap, fmt);
+    n = emit_formatted(stdout, fmt, ap);
+    va_end(ap);
+    return n;
+}
+
+int vprintf(const char *fmt, va_list ap)
+{
+    return emit_formatted(stdout, fmt, ap);
+}
+
 size_t fwrite(const void *ptr, size_t size, size_t nmemb, FILE *stream)
 {
     size_t bytes = size * nmemb;
