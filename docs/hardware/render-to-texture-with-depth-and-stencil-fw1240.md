@@ -65,7 +65,25 @@ this run the shell logged seven `PostExternalKeyboardReceived UserId=0x1ea2f4d9
 characterCode=0x32` - a `2`, which this demo does not bind - so keystrokes reach the system and a
 keyboard is attached.
 
-That does not establish that the title receives them, and no run so far has demonstrated a demo
-responding to one. **The cheapest test is this demo**: `a` toggles animation, so a single press
-turns one present line into a stream. Until that is seen, treat "press a key to check X" as an
-unproven method rather than a plan.
+The title does not receive them. Confirmed by the owner the same evening: no key has any effect
+in any demo, across all four runs. Filed as `REQ-20260922T1905Z-9c31` on the obSCEne bus - does a
+`big-app` ever get keyboard samples, and what grants it - because the two -1s are not the shape a
+platform refusal usually takes here, and a polled `sceKeyboardReadState` might answer where an
+event queue does not.
+
+**The pad is not affected and is the way in.** `oops-sdk/src/gl/glut.c:369` synthesises GLUT
+keyboard and special events from pad buttons, and OPTIONS - which ends every run on this title -
+is three lines below the map in the same function, so the path is demonstrably live:
+
+| button | delivers | reaches |
+|---|---|---|
+| Square | `' '` | **23 of the 56 demos** bind space |
+| Circle | `'\033'` | 48 bind escape |
+| Cross | `'\r'` | |
+| D-pad | `GLUT_KEY_*` | |
+
+That is seven characters against 54 demos that register `glutKeyboardFunc`, so most of the set's
+mode switches stay out of reach. `REQ-20260922T1900Z-3f6a` asks oops-sdk for `glutOopsPostKey`,
+which would let this title carry a build-time key script beside `DEMO=`; it cannot be done here,
+because `oops-apps/common/app.mk:461` compiles every source in one command and the callback being
+hooked is static inside `glut.c`.
