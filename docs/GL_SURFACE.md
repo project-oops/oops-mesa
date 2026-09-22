@@ -164,6 +164,18 @@ gfx1013 by name, GL compute dispatches on GFX, and implementing one would change
 
 ## What this document is not
 
-It is derived entirely from reading code. No part of it has been on hardware. A row in the
-"reachable" table that turns out to draw nothing is not a contradiction of this file - it is
-exactly the thing this file says it cannot tell you.
+It is derived entirely from reading code. A row in the "reachable" table that turns out to draw
+nothing is not a contradiction of this file - it is exactly the thing this file says it cannot
+tell you.
+
+**Its *advertising* half has since been measured, and held.** On 2026-09-22 `mesa-demos`' `glinfo`
+ran on hardware and printed the driver's own answer -
+[the record](hardware/the-advertised-surface-measured-fw1240.md), with all 322 extension names in
+[`gl-extensions-fw1240.txt`](hardware/gl-extensions-fw1240.txt). Every claim above about what is
+*advertised* is confirmed: compute (`GL_ARB_compute_shader`, on a device with no compute ring,
+exactly as the source said), sparse, the interop extensions, and `ARB_sync`. Compressed textures
+are advertised in every family, which answers a question asked the same day.
+
+That measures the first half of each row and not the second. "Advertised" was the part derived
+from Mesa's source; "reachable" and "refused" are still derived from this repository's, and
+`glCompressedTexImage2D` has yet to be called through this shim by anything.
