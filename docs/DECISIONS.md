@@ -28,6 +28,7 @@ against. The status column stays the review queue.
 | 🟢 | D011 | [The maths is FreeBSD's own msun, built for the target, double and float only](decisions/D011-the-maths-is-freebsds-own-msun-double-and-float-only.md) | decided | 2026-09-17 |
 | 🟢 | D012 | [The present path round-trips through linear, and the fix is staged behind a measurement](decisions/D012-the-present-path-round-trips-through-linear-for-nothing.md) | decided | 2026-09-21 |
 | 🟢 | D013 | [The collection compiles with clang 21, and the pin is enforced rather than described](decisions/D013-the-collection-compiles-with-clang-21-and-the-pin-is-enforced.md) | decided | 2026-09-21 |
+| 🟢 | D014 | [The scope is OpenGL 3.3, and the 4.6 the driver reports is radeonsi's claim rather than ours](decisions/D014-the-scope-is-gl-3-3-and-4-6-is-radeonsis-claim-not-ours.md) | decided | 2026-09-22 |
 
 | | meaning |
 |---|---|

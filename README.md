@@ -3,7 +3,14 @@
 **Upstream Mesa on Prospero-generation hardware, with nothing but a shim to maintain.**
 
 OpenGL 3.3 Core and GLSL 3.30 for homebrew built on [oops-sdk](../oops-sdk/), provided by an
-unmodified upstream Mesa pinned as a submodule. This repository owns only the pieces that differ
+unmodified upstream Mesa pinned as a submodule.
+
+**The driver reports more than that, and the difference is deliberate.** `GL_VERSION` on hardware
+reads `4.6 (Compatibility Profile)`: nothing here clamps it, radeonsi derives its version from
+caps, and this part answers 4.6. That is radeonsi's claim about the hardware and not a promise
+this repository makes - 3.3 is the scope, because 3.3 is roughly what has been run. `docs/GL_SURFACE.md`
+works out from the source which parts of the advertised 4.6 are reachable and which meet a
+refusal, and `D014` says why the scope did not simply move up to meet the string. This repository owns only the pieces that differ
 between a Linux box and the hardware: memory, submission and fences (the winsys), presentation
 (the platform), and the C-runtime surface Mesa stands on. Mesa's OpenGL, GLSL compiler, hardware
 driver, tiling library and shader backend are consumed, never edited in place.
@@ -28,7 +35,7 @@ Each directory appears with the unit of work that fills it.
 ## How a title consumes it
 
 Through a static SDK linked by the same `app.mk` every oops-apps title uses, packaged by
-SELFish and deployed by Prosperous. The application draws with OpenGL 3.3, reached through
+SELFish and deployed by Prosperous. The application draws with OpenGL 3.3 (D014), reached through
 Mesa's Gallium DRI frontend rather than EGL - upstream builds EGL as a shared library a static
 title cannot link, so the loader underneath is the entry point (D010). Presentation is the
 display oops-sdk already opens. A title built this way is hosted, not freestanding: it carries

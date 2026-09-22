@@ -5,6 +5,14 @@ record with the fence, GPU clock and pixel hash the oops-gl instrument already p
 order is chosen so that the one measurement which decides the driver route (D003) is made
 before the code that depends on its answer exists.
 
+**The version this file works to is OpenGL 3.3, and the driver reports 4.6 (D014).** Nothing
+clamps it: radeonsi derives its version from caps and this part answers
+`4.6 (Compatibility Profile)`, which is its claim about the hardware rather than a promise made
+here. 3.3 is roughly what has been run. [`GL_SURFACE.md`](GL_SURFACE.md) works out from the
+source which parts of the advertised 4.6 are reachable, which meet a named refusal and which are
+answered hollowly - and it is explicitly not a conformance table, because unit 8 is the only
+thing that can produce one.
+
 | unit | what it delivers | gate | state |
 |---|---|---|---|
 | 1 | the repository: pin, verbs, decisions, this file | `./bin/oops-mesa check` passes; the collection's decision and link gates pass | done 2026-09-14 |
