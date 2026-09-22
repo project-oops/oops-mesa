@@ -57,6 +57,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>   /* malloc/free, for a formatted line longer than the stack buffer */
 #include <string.h>
 #include <unistd.h>   /* for `write`, at the bottom of this file */
 
@@ -172,21 +173,64 @@ static void passthrough_unsupported(const char *who)
     }
 }
 
+/*
+ * Format one call and hand it to the line buffer.
+ *
+ * **A result longer than the stack buffer is formatted again on the heap rather than cut.** The
+ * first version clamped to `sizeof(buf) - 1` and dropped the rest without a word, which is the
+ * same silent-loss failure this file exists to prevent - it was just one layer further in.
+ *
+ * `glinfo` found it on hardware on 2026-09-22. `glGetString(GL_EXTENSIONS)` on a 4.6
+ * compatibility context is several kilobytes; 511 characters of it arrived, ending mid-token, and
+ * the truncation was visible only because the next line began in the middle of a word. Mesa's own
+ * messages are all short, so 512 had been enough for as long as Mesa was the only writer - and a
+ * ported program printing a driver's whole capability string is exactly the case nobody had.
+ *
+ * `line_append` already chunks correctly, so the only limit was this buffer.
+ */
 static int emit_formatted(FILE *stream, const char *fmt, va_list ap)
 {
     char buf[OOPS_LINE_MAX];
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_list retry;
+    int n;
+
+    /* `ap` is consumed by the first `vsnprintf`, so the copy is made before it is used. */
+    va_copy(retry, ap);
+    n = vsnprintf(buf, sizeof(buf), fmt, ap);
 
     if (n <= 0) {
+        va_end(retry);
         return n;
     }
-    size_t len = (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf) - 1u;
 
     if (!stream_is_captured(stream)) {
+        va_end(retry);
         passthrough_unsupported("fprintf");
         return n;
     }
-    line_append(buf, len);
+
+    if ((size_t)n < sizeof(buf)) {
+        va_end(retry);
+        line_append(buf, (size_t)n);
+        return n;
+    }
+
+    /* Longer than the stack buffer: format the whole thing once more, at its real size. */
+    char *big = (char *)malloc((size_t)n + 1u);
+    if (big == NULL) {
+        /* Out of memory is not a reason to say nothing, but it is a reason to say that what
+         * follows is short. The truncated text is still the most useful thing available. */
+        va_end(retry);
+        line_append(buf, sizeof(buf) - 1u);
+        line_flush();
+        oops_klog("MESA", "...the line above is truncated; no memory to format the rest");
+        return n;
+    }
+
+    (void)vsnprintf(big, (size_t)n + 1u, fmt, retry);
+    va_end(retry);
+    line_append(big, (size_t)n);
+    free(big);
     return n;
 }
 
