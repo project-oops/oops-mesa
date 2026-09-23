@@ -165,9 +165,49 @@ static uint32_t build_fence_stream(uint32_t *dw, uint64_t fence_gpu)
     return words;
 }
 
+/*
+ * Every address this command buffer sends the command processor to fetch from.
+ *
+ * obSCEne `REQ-20260922T2230Z-6e81` measured that the CP reads nothing past `desc.size`, does not
+ * prefetch across a page boundary, and that the 2 MiB mapping under `fbotexture`'s fault really is
+ * established - and the map sizes now log as exactly their buffers'. So when CPG faults reading
+ * `0x400020000`, a packet in the stream told it to go there, and the only packet that sends the CP
+ * to fetch a *stream* is `INDIRECT_BUFFER`.
+ *
+ * radeonsi chains: `si_cs_chain` ends one command buffer with an `INDIRECT_BUFFER` pointing at the
+ * next, so the hardware walks a list our `AMDGPU_CHUNK_ID_IB` loop never sees - it submits each
+ * chunk libdrm hands it and knows nothing about what a chunk's last packet points at. If the chain
+ * target is a buffer Mesa allocated but never asked us to map, this is where it shows.
+ *
+ * A PM4 type-3 header is `11` in bits 31-30, the opcode in bits 15-8, and `INDIRECT_BUFFER_CIK` is
+ * 0x3f with the target as the two dwords after it. Scanning for that is a few hundred nanoseconds
+ * against a submission that costs milliseconds, and it prints only when it finds one.
+ */
+#define PM4_TYPE3_INDIRECT_BUFFER 0x3fu
+
+static void log_chained_ibs(uint64_t va, uint32_t bytes)
+{
+    const uint32_t *dw = (const uint32_t *)(uintptr_t)va;
+    const uint32_t n = bytes / 4u;
+
+    for (uint32_t i = 0; i + 2u < n; i++) {
+        if ((dw[i] >> 30) != 3u) {
+            continue;
+        }
+        if (((dw[i] >> 8) & 0xffu) != PM4_TYPE3_INDIRECT_BUFFER) {
+            continue;
+        }
+        const uint64_t target = (uint64_t)dw[i + 1] | ((uint64_t)dw[i + 2] << 32);
+        oops_winsys_log("  chains to 0x%llx at dword %u of this IB",
+                        (unsigned long long)target, i);
+    }
+}
+
 static int submit_one(uint64_t va, uint32_t bytes)
 {
     oops_agc_dcb_desc desc;
+
+    log_chained_ibs(va, bytes);
 
     memset(&desc, 0, sizeof(desc));
     desc.gpu_addr = va;
