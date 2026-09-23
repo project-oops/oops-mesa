@@ -1,8 +1,39 @@
-# The third frame with a framebuffer object faults the GPU
+# The third frame with a framebuffer object faults the GPU — RESOLVED 2026-09-23
 
 **2026-09-22** · firmware 12.40 · the same retail unit as the earlier records · `mesa-demos`
 `fbotexture`, title `MDEM00001` · follows
 [render to texture with depth and stencil](render-to-texture-with-depth-and-stencil-fw1240.md)
+
+> ## Resolved: radeonsi chains its command buffers and the command processor cannot follow
+>
+> **Fixed in `46303e4`. Measured on hardware 2026-09-23: 29 frames, 397 chains walked, zero
+> faults, and `fbotexture` animating — it had never survived a second frame.**
+>
+> When a command stream outgrows its buffer, `amdgpu_cs_flush` allocates another and ends the
+> current one with a type-3 `INDIRECT_BUFFER` naming it. On Linux the kernel is handed the first
+> link and the hardware walks the rest. `fbotexture` chains roughly thirteen times a frame, every
+> frame, which is why the FBO path met this and `gears` never did.
+>
+> The CP cannot walk it here, and obSCEne [`REQ-20260922T2230Z-6e81`](../../../obscene) is why
+> that is a measurement: its arm 4 put a DCB at the end of a page with the next page explicitly
+> unmapped and the submission retired cleanly. The CP reads `gpu_addr` through `+ 4*size` and
+> nothing else, so **the declared range is the only range a submission makes valid** and a jump out
+> of it lands where the GPU has no translation, whatever our own page tables say. The third
+> command buffer chained to `0x400020000` at dword 1980 of 1984, and the fault at that exact
+> address was the next line in the log.
+>
+> `submit_chain` now walks it in software: the dwords before the chain packet as one DCB, then the
+> target as another, bounded at 16 links. The CP never executes an `INDIRECT_BUFFER` because it
+> never sees one.
+>
+> **It explains the symptom as well as the crash.** The fence stream is appended after the last
+> link, so the CP had been jumping over it — which is why this always read as `submission did not
+> retire` rather than as a lost frame.
+>
+> The narrative below is kept as filed, wrong turns included. Three readings were wrong: a freed
+> buffer, a leaked buffer colliding in the address space, and a map larger than its allocation.
+> The second was a real defect found on the way and fixed in `b7eeab1`; the other two were
+> disproved by instrumenting rather than by argument.
 
 That record ended with an FBO rendering correctly and one frame on screen, and noted that one
 frame is `fbotexture`'s specified behaviour because `Anim` defaults false. This is what happens
