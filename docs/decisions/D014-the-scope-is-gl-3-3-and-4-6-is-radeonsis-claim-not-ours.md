@@ -81,3 +81,23 @@ in the shim where a refusal has been replaced by a plausible success.
 
 A measured pass table above 3.3. Not a version string, not a reading of the code, and not a demo
 that draws - a table with a firmware and a build against tests this repository did not write.
+
+## 3.3 is where the evidence is, not where this is going
+
+**Recorded 2026-09-23, from the owner: the destination is 4.6, because modern homebrew and ported
+applications ask for it.** That does not reverse anything above - the argument for 3.3 was never
+that 4.x is out of reach, it was that a capability nobody has run is the failure this project
+exists not to ship - but it does mean this decision is about *sequencing* and should not be read
+as a ceiling.
+
+What it changes in practice is nothing today and the emphasis of two things later. The ordering
+in [GL_SURFACE.md](../GL_SURFACE.md) already ends at a measured 4.6 and already says what stands
+between: sparse VA, which is self-contained in `buffers.c` and depends on nothing, and
+**asynchronous submission**, which is the real one and is blocked on a hardware fact rather than
+on effort (`REQ-20260922T1015Z-4b8e` on the obSCEne bus). Compute, the obstacle everyone expects,
+is already struck off - Mesa refuses `AMD_IP_COMPUTE` on gfx1013 by name and GL compute
+dispatches on the graphics ring regardless.
+
+So the route is known and the first step of it is unchanged: **run the demos**. GL_SURFACE.md's
+step 0 says nothing below it should start first, because what the demos draw decides what is
+worth building. Seven of thirty-seven have run.
