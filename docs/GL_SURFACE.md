@@ -153,6 +153,28 @@ no such primitive under any spelling - so it is now filed as
 - **Depends on:** the answer to that request. A negative answer does not stop asynchronous
   submission, but it decides its shape - CPU-side ordering around a readable fence rather than
   GPU-side waits - and building it before the answer arrives means building it twice.
+- **Half answered, 2026-09-23.** `-4b8e` came back RESOLVED with a settlement of *"zero GPU-side
+  wait synchronization primitives"*, and **one of its two halves checks out against the log rows
+  and the other has no rows at all.**
+
+  *Settled, and this side is acting on it:* no platform symbol and no submit entry point takes a
+  wait list, label address or dependency argument. Every `*WaitOnAddress` / `*WaitEop` /
+  `*WaitLabel` / `*SemaphoreWait` / `*WaitRegisterMem` candidate reads `0x0`, only
+  `sceAgcDriverWaitUntilSafeForRendering` resolves (`0x80056f450`, a display-flip helper taking a
+  handle), and `SubmitDcb`/`SubmitCommandBuffer`/`SubmitMultiDcbs`/`SubmitAcb` all report
+  `has-fence-arg 0x0` (`reports/hardware/20260923-hardened-eboot.obs.log`).
+
+  *Not settled:* whether a `WAIT_REG_MEM` **packet inside a DCB** halts and resumes the graphics
+  ME. The settlement's six result keys for that arm appear in no hardware log, and the fixture's
+  own verdict where it can be read is `skip`/`assumed`, not `pass`. Re-filed as
+  `REQ-20260923T1640Z-8c14`.
+
+  **The gap is exactly the part that matters here**, because this shim does not reach the
+  hardware through the userland submit API for ordering - it writes its own PM4 and already emits
+  type-3 packets into the DCB (`submit.c` walks radeonsi's `INDIRECT_BUFFER` chain roughly 13
+  times a frame). "No fence argument on `sceAgcDriverSubmitDcb`" and "no GPU-side wait available
+  to a command buffer" are different claims, and only the first is measured. So the shape
+  question above is still open, and building either shape now would still mean building it twice.
 
 **3. The refused extension ioctls, individually, when something asks.** `GEM_USERPTR`,
 `FENCE_TO_HANDLE`, `GEM_METADATA`, `SCHED`. Each is one extension, none is core, and a refusal

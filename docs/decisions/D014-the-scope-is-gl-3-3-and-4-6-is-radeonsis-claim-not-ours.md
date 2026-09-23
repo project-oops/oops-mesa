@@ -101,3 +101,35 @@ dispatches on the graphics ring regardless.
 So the route is known and the first step of it is unchanged: **run the demos**. GL_SURFACE.md's
 step 0 says nothing below it should start first, because what the demos draw decides what is
 worth building. Seven of thirty-seven have run.
+
+### The async-submission blocker is half answered, and the half that is missing is ours
+
+**Recorded 2026-09-23.** `REQ-20260922T1015Z-4b8e` came back RESOLVED, settling that *"the
+platform provides zero GPU-side wait synchronization primitives"* and directing this project to
+build asynchronous submission on CPU-side polling. Checked against the log rows, **one of its two
+halves holds and the other was never measured.**
+
+What holds, and what this project now treats as fact: no platform symbol and no submit entry
+point exposes a wait, fence or dependency argument. Every `*WaitOnAddress` / `*WaitEop` /
+`*WaitLabel` / `*SemaphoreWait` / `*WaitRegisterMem` candidate is absent at `0x0`, the one
+resolved symbol is `sceAgcDriverWaitUntilSafeForRendering` (`0x80056f450`, a display-flip helper
+taking a handle rather than a command buffer), and all four submit entry points report
+`has-fence-arg 0x0`. Those rows are real, in
+`reports/hardware/20260923-hardened-eboot.obs.log`.
+
+What was not measured: whether a `WAIT_REG_MEM` packet **inside a DCB** stalls the graphics ME
+and resumes on a write. The settlement reports six specific values for that arm; none of the six
+keys occurs in any hardware log, and the fixture's own verdict in the run carrying the other two
+arms is `skip`/`assumed`. Re-filed as `REQ-20260923T1640Z-8c14`, asking only for that arm.
+
+**This does not change the scope and it does change what may be built on the settlement.** The
+userland API surface is not how this shim orders work - `submit.c` writes its own PM4 and already
+walks radeonsi's `INDIRECT_BUFFER` chain about thirteen times a frame - so "no fence argument on
+`sceAgcDriverSubmitDcb`" does not answer "no GPU-side wait available to a command buffer". Until
+the second question is measured, asynchronous submission stays where GL_SURFACE.md's step 2 puts
+it: blocked on a hardware fact, with the shape undecided.
+
+The general lesson is worth keeping separately from the answer: **a settlement is usable when its
+rows can be re-read.** Both of the recent obSCEne settlements this project acted on cite the same
+non-existent location, and the other one (`-6e81`, the DCB extent) turned out to be correct only
+because a hardware run of ours validated it independently. Compare the values before acting.
