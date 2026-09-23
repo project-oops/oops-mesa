@@ -377,6 +377,34 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg)
         uint64_t size = arg->map_size ? round_up_page(arg->map_size) : bo->size;
 
         /*
+         * **A map larger than the buffer would hand the GPU pages nobody allocated.**
+         *
+         * `oops_mem_batch_map` walks `size / OOPS_WINSYS_PAGE` pages from `bo->phys`, so a
+         * `map_size` past the end of the allocation points page-table entries at physical memory
+         * this process never owned. The mapping call succeeds - every entry is accepted - and the
+         * GPU faults the first time it reads past the real pages, at an address our own log says
+         * is mapped. There was no check, and that is the shape of the `fbotexture` fault:
+         * `0x400020000` is 128 KiB into a buffer we recorded as 2 MiB.
+         *
+         * obSCEne `REQ-20260922T2230Z-6e81` is what makes this the remaining candidate rather than
+         * a guess. Its five arms measured on hardware that the command processor never reads past
+         * `desc.size`, needs no terminator or padding, does not prefetch across a page boundary
+         * even when the next page is unmapped, and that a 2 MiB `sceKernelBatchMap` really does
+         * establish all 128 pages - including `0x20000`, the exact faulting offset. The hardware
+         * and the kernel are both innocent, so what is left is what we asked them to map.
+         *
+         * Refused rather than clamped. A clamp would leave Mesa believing it has a range it does
+         * not, which is the same silent wrong answer one level up (CLAUDE.md principle 4).
+         */
+        if (size > bo->size) {
+            oops_winsys_log(
+                "VA map refused: buffer %u is %llu bytes but the map asks for %llu at 0x%llx",
+                arg->handle, (unsigned long long)bo->size, (unsigned long long)size,
+                (unsigned long long)arg->va_address);
+            return -EINVAL;
+        }
+
+        /*
          * **Does this address range already belong to a live buffer?**
          *
          * On Linux the kernel owns the GPU address space and refuses a map that collides. Here
@@ -427,8 +455,9 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg)
          * One line per VA operation, not per frame: Mesa maps during setup and on resize, so this
          * is tens of lines in a run, against the ~500 ioctls a run already prints.
          */
-        oops_winsys_log("VA map: buffer %u at 0x%llx, %llu bytes", arg->handle,
-                        (unsigned long long)arg->va_address, (unsigned long long)size);
+        oops_winsys_log("VA map: buffer %u at 0x%llx, %llu bytes (buffer holds %llu)",
+                        arg->handle, (unsigned long long)arg->va_address,
+                        (unsigned long long)size, (unsigned long long)bo->size);
         return 0;
     }
     case AMDGPU_VA_OP_UNMAP:
