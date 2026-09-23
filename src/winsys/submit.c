@@ -184,30 +184,81 @@ static uint32_t build_fence_stream(uint32_t *dw, uint64_t fence_gpu)
  * against a submission that costs milliseconds, and it prints only when it finds one.
  */
 #define PM4_TYPE3_INDIRECT_BUFFER 0x3fu
+#define PM4_IB_SIZE_MASK          0xfffffu  /* the dword count lives in bits 19:0 of the third word */
+#define OOPS_MAX_IB_CHAIN         16u
 
-static void log_chained_ibs(uint64_t va, uint32_t bytes)
+static int submit_one(uint64_t va, uint32_t bytes);
+
+/*
+ * Submit a command stream, walking any chain it ends in rather than letting the hardware follow
+ * it. **This is the difference between this platform and Linux, and it is the whole of the
+ * `fbotexture` fault.**
+ *
+ * radeonsi does not build one command buffer per flush. When a stream outgrows its buffer,
+ * `amdgpu_cs_flush` allocates another and ends the current one with a type-3 `INDIRECT_BUFFER`
+ * naming it, so the driver hands the kernel the first link and the command processor walks the
+ * rest. On Linux that works because the kernel has the whole address space mapped and the CP may
+ * fetch anywhere in it.
+ *
+ * Here it does not, and obSCEne `REQ-20260922T2230Z-6e81` is why we can say that rather than guess
+ * it. Its arm 4 put a DCB at the end of a page with the *next page unmapped* and the CP retired
+ * without a fault - it reads `desc.gpu_addr` through `+ 4*size` and nothing else. The declared
+ * range is the only range the submission makes valid, so a jump out of it lands on a page the
+ * GPU has no translation for, whatever our own page tables say. Measured: `fbotexture`'s third
+ * command buffer chains to `0x400020000` at dword 1980 of 1984, and the protection fault at that
+ * exact address is the next line in the log.
+ *
+ * So each link is submitted in its own right: the dwords *before* the chain packet as one DCB,
+ * then the target as another, repeating for as long as the chain runs. The CP never executes an
+ * `INDIRECT_BUFFER`, because it never sees one - which also means the fence stream appended after
+ * the last link is reached instead of being jumped over, and that is why the old failure showed
+ * up as "submission did not retire" rather than as a lost frame.
+ *
+ * `OOPS_MAX_IB_CHAIN` bounds it. A corrupt stream that chains to itself would otherwise loop here
+ * forever, and a shim that hangs is worse than one that says it gave up.
+ */
+static int submit_chain(uint64_t va, uint32_t bytes, unsigned int depth)
 {
     const uint32_t *dw = (const uint32_t *)(uintptr_t)va;
     const uint32_t n = bytes / 4u;
 
-    for (uint32_t i = 0; i + 2u < n; i++) {
+    if (depth >= OOPS_MAX_IB_CHAIN) {
+        oops_winsys_log("instruction buffer chain is deeper than %u; refusing to follow further",
+                        OOPS_MAX_IB_CHAIN);
+        return -EIO;
+    }
+
+    for (uint32_t i = 0; i + 3u < n; i++) {
         if ((dw[i] >> 30) != 3u) {
             continue;
         }
         if (((dw[i] >> 8) & 0xffu) != PM4_TYPE3_INDIRECT_BUFFER) {
             continue;
         }
+
         const uint64_t target = (uint64_t)dw[i + 1] | ((uint64_t)dw[i + 2] << 32);
-        oops_winsys_log("  chains to 0x%llx at dword %u of this IB",
-                        (unsigned long long)target, i);
+        const uint32_t target_dw = dw[i + 3] & PM4_IB_SIZE_MASK;
+
+        oops_winsys_log("  chains to 0x%llx (%u dwords) at dword %u; submitting it as its own",
+                        (unsigned long long)target, target_dw, i);
+
+        /* The part before the chain packet is a complete stream in itself. Zero dwords happens
+         * when a buffer holds nothing but the chain, and submitting an empty DCB is not useful. */
+        if (i > 0u && submit_one(va, i * 4u) != 0) {
+            return -EIO;
+        }
+        if (target_dw == 0u) {
+            return 0;
+        }
+        return submit_chain(target, target_dw * 4u, depth + 1u);
     }
+
+    return submit_one(va, bytes);
 }
 
 static int submit_one(uint64_t va, uint32_t bytes)
 {
     oops_agc_dcb_desc desc;
-
-    log_chained_ibs(va, bytes);
 
     memset(&desc, 0, sizeof(desc));
     desc.gpu_addr = va;
@@ -279,7 +330,7 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg)
              */
             oops_winsys_log("submitting IB at 0x%llx, %u bytes",
                             (unsigned long long)ib->va_start, ib->ib_bytes);
-            if (submit_one(ib->va_start, ib->ib_bytes) != 0) {
+            if (submit_chain(ib->va_start, ib->ib_bytes, 0u) != 0) {
                 oops_winsys_log("the driver refused an instruction buffer of %u bytes",
                                 ib->ib_bytes);
                 return -EIO;
