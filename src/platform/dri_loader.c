@@ -33,11 +33,34 @@
  * cross-process mechanisms this platform does not have (D009, worklog 032).
  */
 
+#include <errno.h>
+#include <sys/stat.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/*
+ * Restated from `mesa/subprojects/libdrm-2.4.133/xf86drm.h` at the pin, the same way this file
+ * restates `dri_util.h`'s prototypes above: `xf86drm.h` is not on this shim's include path, and
+ * putting it there would pull libdrm's whole surface in for two calls. A wrong layout here would
+ * read the wrong field, so it is copied rather than remembered.
+ */
+typedef struct _drmVersion {
+    int   version_major;
+    int   version_minor;
+    int   version_patchlevel;
+    int   name_len;
+    char *name;
+    int   date_len;
+    char *date;
+    int   desc_len;
+    char *desc;
+} drmVersion, *drmVersionPtr;
+
+extern drmVersionPtr drmGetVersion(int fd);
+extern void          drmFreeVersion(drmVersionPtr);
 
 #include "mesa_interface.h"
 #include "oops_platform.h"
@@ -580,6 +603,58 @@ struct oops_gl *oops_gl_create(uint32_t width, uint32_t height)
      * the image path this shim's extension table serves. `SWRAST` would silently select the
      * software rasteriser, which is the failure this project refuses to fall back to.
      */
+    /*
+     * What the descriptor is, before the frontend is asked to accept it.
+     *
+     * `driCreateNewScreen3` returns a bare NULL and Mesa's own reasons go to a log level this
+     * platform cannot turn on - `getenv` returns null for every name, so `LIBGL_DEBUG` and its
+     * kin are unreachable. That left "would not create a screen" as the entire diagnosis, which
+     * it is not: on 2026-09-24 it stood for at least two different causes on the same day, and
+     * telling them apart cost two hardware runs each.
+     *
+     * The frontend's first act is `pipe_loader_drm_probe_fd` -> `loader_get_driver_for_fd`, and
+     * on this platform that answer comes from `drmGetVersion`, an ioctl the shim serves. So
+     * asking the same question first, from here, splits the failure in two: a version that comes
+     * back means the descriptor and the ioctl path are both good and the frontend declined
+     * further in; nothing coming back means it never got past the fd.
+     */
+    {
+        drmVersionPtr v = drmGetVersion(gl->fd);
+        char          msg[128];
+        struct stat   sb;
+
+        /*
+         * `fstat` is asked for separately because it is not an ioctl and the shim therefore
+         * never sees it. libdrm's `amdgpu_device_initialize` calls it to key its device table,
+         * before it issues any ioctl of its own - so a descriptor that answers every ioctl and
+         * cannot be `fstat`ed stops the frontend exactly here, having named its driver, with no
+         * further ioctl to show for it.
+         */
+        if (fstat(gl->fd, &sb) != 0) {
+            (void)snprintf(msg, sizeof(msg),
+                           "device fd %d cannot be fstat'ed (errno %d) - libdrm keys its device "
+                           "table on that and will stop before its first ioctl",
+                           gl->fd, errno);
+        } else {
+            (void)snprintf(msg, sizeof(msg), "device fd %d fstat: mode 0%o rdev %lu", gl->fd,
+                           (unsigned)sb.st_mode, (unsigned long)sb.st_rdev);
+        }
+        say(msg);
+
+        if (v != NULL) {
+            (void)snprintf(msg, sizeof(msg), "device fd %d answers drmGetVersion: %s %d.%d.%d",
+                           gl->fd, v->name ? v->name : "(unnamed)", v->version_major,
+                           v->version_minor, v->version_patchlevel);
+            drmFreeVersion(v);
+        } else {
+            (void)snprintf(msg, sizeof(msg),
+                           "device fd %d does NOT answer drmGetVersion (errno %d) - the frontend "
+                           "cannot name a driver for it",
+                           gl->fd, errno);
+        }
+        say(msg);
+    }
+
     gl->screen = driCreateNewScreen3(0, gl->fd, s_loader_extensions, DRI_SCREEN_DRI3,
                                      &configs, false, false, gl);
     if (gl->screen == NULL) {

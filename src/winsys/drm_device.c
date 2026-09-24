@@ -29,6 +29,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
+#include <unistd.h> /* STDERR_FILENO, for the device descriptor in `oops_winsys_open` */
 
 /* The target sysroot exposes `F_DUPFD_CLOEXEC` directly; the host test compiles this file against
  * glibc, which gates it behind a feature macro. The close-on-exec flag is immaterial here - a
@@ -61,9 +62,13 @@
  * hardware 2026-09-19: `getenv` ran, then "the DRI frontend would not create a screen", with no
  * ioctl trace at all (worklog 049).
  *
- * So the descriptor now has to be a real, dup-able fd. `OOPS_WINSYS_FD` remains only as the
- * fallback for when a real one cannot be obtained, which keeps mesa-probe's path working
- * unchanged. `s_winsys_fd` holds whichever it turned out to be. */
+ * So the descriptor has to be one the kernel recognises. **Not a dup-able one** - that was the
+ * reading on 2026-09-19 and it is wrong: patch 003 answers the failing dup by passing the fd
+ * through unchanged, so nothing is ever duplicated, and what the frontend and libdrm need is
+ * only that `fstat` and friends do not `EBADF`. `oops_winsys_open` takes stderr for it and says
+ * why at length. `OOPS_WINSYS_FD` remains only as the fallback for when even that is not
+ * available, which keeps mesa-probe's path working unchanged. `s_winsys_fd` holds whichever it
+ * turned out to be. */
 #define OOPS_WINSYS_FD 0x0057
 
 static int s_winsys_fd = OOPS_WINSYS_FD;
@@ -676,6 +681,94 @@ int oops_winsys_get_cap(struct drm_get_cap *arg)
     }
 }
 
+/*
+ * Take the device descriptor, once, and hold it for the life of the process.
+ *
+ * **It is claimed from `.init_array` rather than at first use, and that is the whole point.**
+ * `/app0` is a nullfs mount inside the title's jail. A title that raises sandbox-escape
+ * privileges to reach `/data` - which `oops_fs_storage_path` does, `oops-sdk/include/oops/fs.h:88`
+ * - has its root repointed to the real rootvnode, and from that moment `/app0` names nothing:
+ *
+ *     [SANDBOX] repointed fd_rdir, fd_jdir, and fd_cdir to rootvnode (...) for PID 3783
+ *
+ * Claimed lazily, a title that wrote a file before it drew got ENOENT here and no GL context at
+ * all. Claimed in a constructor, the open happens before any title code runs, so the order a
+ * title does its own work in stops mattering. `oops_mesa_run_init_array()` is what walks these
+ * on a hosted title with no crt, and every Mesa title here already calls it first thing -
+ * ACO's opcode table is a constructor too, so a title that skips it has no driver either.
+ *
+ * gl-cts measured the window either side (`oops-apps` `REQ-20260924T1414Z-9e31`):
+ *
+ *     gl-cts: /app0 reachable before the log path is resolved
+ *     gl-cts: /app0 is NOT reachable after the log path is resolved (errno 2)
+ *
+ * # Why a file and not stderr
+ *
+ * stderr is open on every leg, needs no filesystem, and answers ioctls perfectly well - measured
+ * on 2026-09-24, fd 2 served two `DRM_IOCTL_VERSION` calls and named `amdgpu 3.54.0`. It is
+ * still not enough, because libdrm's `amdgpu_device_initialize` keys its device table with
+ * **`fstat`**, which is not an ioctl and never reaches this shim. The frontend stopped there,
+ * having named its driver, with no further ioctl to show for it - two in the log where a working
+ * run has thirty-nine.
+ *
+ * So the descriptor has to be something `fstat` answers for, which the title's own eboot is and
+ * a standard stream on this platform is not. stderr remains the fallback: it is strictly better
+ * than the token for a direct-radeonsi title, which never leaves the ioctl path.
+ *
+ * # What is *not* required, despite what this file used to say
+ *
+ * It does not have to be dup-able. `fcntl(F_DUPFD)` answers EINVAL here for every descriptor, a
+ * genuine open regular file included (worklog 049, three hardware runs), so patch 003 makes
+ * `os_dupfd_cloexec` return the fd unchanged and nothing is ever duplicated. Its own note says
+ * the passthrough "needs no dup primitive at all".
+ *
+ * The fd's *identity* is all that is used beyond `fstat`: `oops_winsys_mmap` ignores it, every
+ * ioctl is patched to this shim, `oops_winsys_close` closes nothing, and the device is a
+ * process-lifetime singleton, so nothing here reads, writes or maps it.
+ */
+int oops_winsys_claim_fd(void)
+{
+    if (s_winsys_fd != OOPS_WINSYS_FD) {
+        return s_winsys_fd; /* already held */
+    }
+
+    int f = open("/app0/eboot.bin", O_RDONLY);
+    if (f >= 0) {
+        s_winsys_fd = f;
+        return s_winsys_fd;
+    }
+
+    /*
+     * `F_GETFD` rather than an open: it is the same test `oops_winsys_close` below uses to tell a
+     * real descriptor from a never-opened one, so it is known to work here - unlike `F_DUPFD`,
+     * which is the one command this platform refuses.
+     */
+    if (fcntl(STDERR_FILENO, F_GETFD) != -1) {
+        s_winsys_fd = STDERR_FILENO;
+        oops_winsys_log("could not open /app0/eboot.bin for a device descriptor (errno %d); "
+                        "using stderr, which answers ioctls but which libdrm cannot fstat - a "
+                        "direct-radeonsi title will work and the DRI frontend will not",
+                        errno);
+        return s_winsys_fd;
+    }
+
+    oops_winsys_log("no descriptor the kernel recognises is available (errno %d); using the "
+                    "token 0x%x, which serves a direct-radeonsi title but not the DRI frontend",
+                    errno, OOPS_WINSYS_FD);
+    return s_winsys_fd;
+}
+
+/*
+ * Runs from `.init_array`, before any title code. See `oops_winsys_claim_fd` for why the timing
+ * is the fix rather than a detail. It deliberately does not check `sceAgcDriverCreateQueue`:
+ * opening a file needs no graphics driver, and the binding may not have happened yet at
+ * constructor time. `oops_winsys_open` below is where "is there a device at all" is answered.
+ */
+__attribute__((constructor)) static void oops_winsys_claim_fd_early(void)
+{
+    (void)oops_winsys_claim_fd();
+}
+
 int oops_winsys_open(void)
 {
     if (!sceAgcDriverCreateQueue) {
@@ -684,47 +777,12 @@ int oops_winsys_open(void)
     }
 
     /*
-     * A real, dup-able descriptor, because the DRI frontend dups it (see the note on
-     * `OOPS_WINSYS_FD`). It is obtained by duplicating an already-open standard descriptor rather
-     * than by opening a path: stderr is open on every leg - the same programme of sweeps that
-     * found stdout/stderr go nowhere also found them open (`REQ-20260917T0233Z-5c9d`) - and
-     * duplicating an open fd is a kernel primitive that needs no filesystem the sandbox might not
-     * have. `fcntl(F_DUPFD_CLOEXEC)` is exactly what `os_dupfd_cloexec` will call on the result,
-     * so if this succeeds the frontend's dup will too.
-     *
-     * The fd's *identity* is all that is used. `oops_winsys_mmap` ignores it (`(void)fd`), the
-     * ioctl path is patched to this shim regardless of it, and nothing here reads, writes or maps
-     * it - so the fact it aliases stderr's sink is immaterial; only `ioctl`, which never reaches
-     * the kernel for it, is ever issued.
-     *
-     * On failure it falls back to the token, which is what mesa-probe has always used and which
-     * still works for a title that does not go through the frontend.
+     * The descriptor itself was taken in `.init_array`, before any title code ran - see
+     * `oops_winsys_claim_fd` above for why that timing is the fix and not a detail. This is only
+     * where "is there a device at all" is answered, which needs the driver binding and so cannot
+     * happen that early.
      */
-    /*
-     * A real, open descriptor rather than a bare token. It cannot be *dupped* - measured on
-     * hardware, `fcntl(F_DUPFD)` and `F_DUPFD_CLOEXEC` both return EINVAL even on a genuine open
-     * regular file, so this platform simply does not implement fcntl-based duplication (worklog
-     * 049). The DRI frontend dups the device fd through `os_dupfd_cloexec`, which patch 003 makes
-     * pass the fd through unchanged on exactly that EINVAL - so the descriptor the frontend then
-     * uses is this same one, and it must be a real fd, because the frontend and libdrm's device
-     * probing do incidental non-ioctl things to it (`fstat`, `/proc`-style lookups) that a token
-     * would `EBADF`. The title's own eboot is always present and openable (measured: fd came back
-     * with errno 0), and nothing here ever reads, writes or mmaps it - `oops_winsys_mmap` ignores
-     * the fd - so its being the eboot file is immaterial; only its identity is used, for the gate.
-     *
-     * Falls back to the token if the open ever fails, which keeps a direct-radeonsi title
-     * (mesa-probe) working - that path never dups and never touches the fd but through ioctl.
-     */
-    int f = open("/app0/eboot.bin", O_RDONLY);
-    if (f >= 0) {
-        s_winsys_fd = f;
-    } else {
-        s_winsys_fd = OOPS_WINSYS_FD;
-        oops_winsys_log("could not open a real descriptor for the device (errno %d); using the "
-                        "token 0x%x, which serves a direct-radeonsi title but not the DRI frontend",
-                        errno, OOPS_WINSYS_FD);
-    }
-    return s_winsys_fd;
+    return oops_winsys_claim_fd();
 }
 
 int oops_winsys_close(int fd)

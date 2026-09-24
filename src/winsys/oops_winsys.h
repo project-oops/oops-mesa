@@ -20,6 +20,12 @@ extern "C" {
  * or a negative errno. Fails when the platform graphics driver is not bound, rather than
  * returning a descriptor that cannot do anything. */
 int oops_winsys_open(void);
+
+/* Take the device descriptor and hold it for the process. Called from `.init_array` so that it
+ * happens while `/app0` is still reachable - a title that writes to `/data` first escapes the
+ * sandbox and loses that path. Declared here because it is a constructor's target and must not
+ * be static. See the note on it in `drm_device.c`. */
+int oops_winsys_claim_fd(void);
 int oops_winsys_close(int fd);
 
 /* The command set. A command with nothing behind it returns -ENOSYS and says which one it was;
