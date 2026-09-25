@@ -19,6 +19,22 @@ hardware involved. **It is not a conformance table and must never be cited as on
 where a feature would *first* be refused if something exercised it - which is a different and
 weaker claim than saying it works.
 
+**A conformance table is now possible, and this file is still not it.** The Khronos CTS runs on
+the console as of 2026-09-25 ([the record](hardware/the-khronos-cts-runs-fw1240.md)), so the rows
+below can be *checked* rather than only derived. What has been checked so far is small -
+`KHR-GL30.info` and twenty cases across `get_uniform`, `buffer_objects`, `clip_distance` and
+`transform_feedback` - and one of them, `transform_feedback.draw_xfb_stream_test`, hangs the GPU.
+Where a row below and a CTS result disagree, the CTS result wins and the row is wrong.
+
+**On the 4.6 in the string above.** It is radeonsi's arithmetic from caps, and D014 keeps the
+scope at 3.3 for the reason that a capability nobody has run is what this project exists not to
+ship. That is a statement about *evidence*, not a clamp: nothing in the build limits the version,
+and "3.3" being the scope has been read elsewhere as "4.6 is unsupported", which does not follow
+from anything here. The measurement that would settle it is `KHR-GL46`, and the one attempt
+crashed on a gap in this port's own entry-point table rather than on anything the driver said -
+see the note on `gl-cts/tools/gen-gl-loader.py`. Until that run comes back, neither "4.6 works"
+nor "4.6 does not work" is written down here, because neither has been measured.
+
 ## The headline, which is not what it looks like from the outside
 
 **Most of core 4.6 is reachable. Almost nothing above 3.3 has been run.** Those are separate

@@ -10,7 +10,21 @@ reads `4.6 (Compatibility Profile)`: nothing here clamps it, radeonsi derives it
 caps, and this part answers 4.6. That is radeonsi's claim about the hardware and not a promise
 this repository makes - 3.3 is the scope, because 3.3 is roughly what has been run. `docs/GL_SURFACE.md`
 works out from the source which parts of the advertised 4.6 are reachable and which meet a
-refusal, and `D014` says why the scope did not simply move up to meet the string. This repository owns only the pieces that differ
+refusal, and `D014` says why the scope did not simply move up to meet the string.
+
+**"3.3 is the scope" is a statement about evidence and not a ceiling, and it has been read as
+one.** Nothing in this repository limits the version: the build sets no clamp, the driver answers
+4.6, and every package from `KHR-GL30` to `KHR-GL46` is registered in the conformance title. What
+3.3 means is that 3.3 is what has been *run*, and this project does not claim a capability it has
+not exercised. Whether a 4.6 context works is a measurement nobody has completed - the attempt on
+2026-09-25 crashed on a gap in the port's own entry-point table, not on anything the driver said -
+so neither "4.6 works" nor "4.6 does not" is written down anywhere here.
+
+**The Khronos CTS runs on the console as of 2026-09-25** ([the record](docs/hardware/the-khronos-cts-runs-fw1240.md)):
+`opengl-cts-4.6.8.1` unmodified, 25 packages registered, the subset chosen at run time.
+`KHR-GL30.info` is 6/6 and twenty further cases pass; one,
+`transform_feedback.draw_xfb_stream_test`, hangs the GPU and is the first conformance result that
+is about this driver rather than about the port. This repository owns only the pieces that differ
 between a Linux box and the hardware: memory, submission and fences (the winsys), presentation
 (the platform), and the C-runtime surface Mesa stands on. Mesa's OpenGL, GLSL compiler, hardware
 driver, tiling library and shader backend are consumed, never edited in place.
