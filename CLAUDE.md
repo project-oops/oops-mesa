@@ -1,69 +1,70 @@
 # CLAUDE.md
 
-How oops-mesa is built and the constraints to honour when changing it.
+Agent rules for oops-mesa. Read the root [AGENTS.md](../AGENTS.md),
+[CONVENTIONS](../docs/CONVENTIONS.md) and [STYLE](../docs/STYLE.md) first; this file only
+adds to them.
 
-**Read [the master agent instructions](../AGENTS.md) and [the OOPS conventions](../docs/CONVENTIONS.md) first.**
-Provenance, naming, decision logs, worklogs and gates are shared across the collection and
-centralised in the parent repository. This file holds only what oops-mesa adds.
+## Scope
 
-## Mission, in one breath
+Upstream Mesa running on Prospero-generation hardware for homebrew built on oops-sdk. This
+repository owns only the shims that differ from a Linux host. Mesa provides OpenGL; none of it
+is written here.
 
-Upstream Mesa running on Prospero-generation hardware for homebrew built on oops-sdk, with
-this repository owning only the shims that differ from a Linux host: memory and submission,
-presentation, and the C-runtime surface. Mesa provides OpenGL; we never write any of it.
+## Mesa submodule
 
-## Principles
+- Mesa is a submodule and stays unmodified in place. The pin is in `dependencies.mk`.
+- A change to Mesa is a numbered patch under `patches/`, applied at build time, with a header
+  saying what it changes and why it cannot be a shim.
+- A patch longer than a screen belongs in a shim or upstream.
+- The pin and the patch set are one unit: bumping the pin means re-applying the patches and
+  re-running the hardware tests.
 
-### 1. Mesa is a submodule and stays unmodified in place
+## Three shims
 
-The pin lives in `dependencies.mk`. Changes to Mesa are numbered patches under `patches/`,
-applied at build time, each with a header saying what it changes and why it could not be a
-shim. A patch that grows past a screen is a sign the change belongs in a shim or upstream.
-Bumping the pin means re-applying the patches and re-running the hardware tests; the pin and
-the patch set are one unit.
+- **winsys**: buffers, mapping, submission, fences.
+- **platform**: presentation to the display oops-sdk opens.
+- **runtime**: what Mesa asks of a C library, mapped onto the SDK and the platform's own C
+  library.
+- A change that fits none of the three needs a decision before the code.
+- The GL API, the GLSL compiler, the hardware driver, the tiling library and the shader
+  backend are Mesa's. A bug in them is reported upstream, not worked around here.
 
-### 2. Three shims, nothing else
+## Hardware facts
 
-The winsys (buffers, mapping, submission, fences), the platform (presentation to the display
-oops-sdk opens) and the runtime (what Mesa asks of a C library, mapped onto the SDK and the
-platform's own C library). If a change does not fit one of the three, stop and write a decision
-before writing the code. The GL API, the GLSL compiler, the hardware driver, the tiling library
-and the shader backend are Mesa's; a bug in them is reported upstream, not patched around here.
+- Every hardware fact the shims use (register semantics, descriptor layouts, packet formats,
+  driver calling conventions) is a measurement with a cited source.
+- The source is a stable pointer: a Mesa file and line, a `data/` or `docs/hardware/` record,
+  or a test. Never a request or worklog ID.
+- Preference order: an oops-sdk oracle record, then an obSCEne measurement, then a public
+  source.
+- A fact first seen in another project's source is a candidate until a run on this hardware
+  confirms it.
 
-### 3. Every hardware fact is a measurement with a citation
+## Failure
 
-The shims program the hardware through facts: register semantics, descriptor layouts, packet
-formats, the driver's calling conventions. Each one must trace to an oops-sdk oracle record, an
-obSCEne measurement, or a public source, in that order of preference, and says which in a
-comment. A fact first seen in another project's source is a candidate until a run on this
-hardware confirms it (orbistoun worklog 541 is the worked example). Nothing here is read from a
-vendor binary.
+- A frame that did not retire is a failure, never a fallback to software rendering. This
+  differs from the collection's CPU-rasterization fail-safe: a software frame would hide the
+  fault this project exists to find.
 
-### 4. Honest failure over plausible output
+## Hosted titles
 
-A verb with nothing behind it exits 1 and says what is missing (oops-sdk#D001). A build that
-cannot reach the hardware says so. A frame that did not retire is a failure, never a fallback to
-software: this is the same rule oops-gl adopted after its badge lied (orbistoun worklog 539).
+- A title linking oops-mesa carries a C runtime and is not freestanding. The SDK fragment and
+  the packaging label it hosted.
+- No oops-sdk document implies hosted and freestanding titles are interchangeable.
+- This divergence from the collection's freestanding rule is confined to titles that link
+  this project (D002).
 
-### 5. Hosted titles are labelled hosted
+## Toolchain
 
-A title linking oops-mesa carries a C runtime and is not freestanding. The SDK fragment says
-so, the packaging says so, and no oops-sdk document may imply the two kinds of title are
-interchangeable. This is a stated divergence from the collection's freestanding rule, recorded
-in D002, and it is confined to titles that link this project.
-
-## Toolchains
-
-Container first, as everywhere in the collection: the Mesa build runs in the image described
-by `toolchain/Dockerfile`. WSL `oops-builder` builds the shims' host tests; the hardware is
-reached through Prosperous. Never install a toolchain machine-wide for this project.
+- The Mesa build runs in the image described by `toolchain/Dockerfile`.
+- WSL `oops-builder` builds the shims' host tests.
+- The hardware is reached through Prosperous.
+- C code is formatted with the collection `.clang-format` ([STYLE section 2](../docs/STYLE.md#formatting)),
+  and `./bin/oops-mesa check` runs it.
 
 ## Start here
 
 ```sh
-./bin/oops-mesa check     # is the tree sound: pin, patches, documents
-docs/ROADMAP.md           # what is next, in order, and the measurement that gates the route
+./bin/oops-mesa check     # pin, patches, documents, formatting
+docs/ROADMAP.md           # intended order of work
 ```
-
-Write a decision as a choice is made, a worklog entry when a unit of work completes, and cite
-sibling projects' entries with the repository prefix (`orbistoun#541`, `oops-sdk#D005`).
