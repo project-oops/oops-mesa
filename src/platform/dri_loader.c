@@ -34,6 +34,7 @@
  */
 
 #include <errno.h>
+#include <fcntl.h> /* the dup probe below, which replicates os_dupfd_cloexec */
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -640,6 +641,44 @@ struct oops_gl *oops_gl_create(uint32_t width, uint32_t height)
                            (unsigned)sb.st_mode, (unsigned long)sb.st_rdev);
         }
         say(msg);
+
+        /*
+         * The dup, replicated exactly as `os_dupfd_cloexec` does it.
+         *
+         * `pipe_loader_drm_probe_fd` is `if (fd < 0 || os_dupfd_cloexec(fd) < 0) return false;`
+         * and that return is the only way out of the frontend that issues **no ioctl at all** -
+         * which is what a failing screen looks like here: two `DRM_IOCTL_VERSION` in the log,
+         * both of them this file's own `drmGetVersion` above, and none from Mesa.
+         *
+         * Patch 003 makes `os_dupfd_cloexec` hand the fd back unchanged, but **only on EINVAL**:
+         *
+         *     newfd = fcntl(fd, F_DUPFD_CLOEXEC, 3);
+         *     if (newfd >= 0) return newfd;
+         *     if (errno != EINVAL) return -1;
+         *
+         * so any other errno bails before the guard can fire. That matters because a title which
+         * has escaped the sandbox is running with different credentials - `cr_uid=0`,
+         * `cr_scecaps` all ones, a borrowed `cr_prison` - and nothing has ever checked whether
+         * `fcntl` still answers EINVAL under them. This prints the answer rather than assuming
+         * the 2026-09-19 measurement still holds.
+         */
+        {
+            char dmsg[160];
+            int  a, ea, b, eb;
+
+            errno = 0;
+            a     = fcntl(gl->fd, F_DUPFD_CLOEXEC, 3);
+            ea    = errno;
+            errno = 0;
+            b     = fcntl(gl->fd, F_DUPFD, 3);
+            eb    = errno;
+
+            (void)snprintf(dmsg, sizeof(dmsg),
+                           "dup probe on fd %d: F_DUPFD_CLOEXEC=%d errno %d, F_DUPFD=%d errno %d "
+                           "(patch 003 only passes the fd through when that errno is EINVAL=%d)",
+                           gl->fd, a, ea, b, eb, EINVAL);
+            say(dmsg);
+        }
 
         if (v != NULL) {
             (void)snprintf(msg, sizeof(msg), "device fd %d answers drmGetVersion: %s %d.%d.%d",
