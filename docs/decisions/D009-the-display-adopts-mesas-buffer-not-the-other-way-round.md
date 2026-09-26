@@ -1,108 +1,26 @@
-# D009 - The display adopts Mesa's buffer, not the other way round
+# D009 - The display scans out Mesa's colour buffer
 
-**decided** · 2026-09-17
+**Status:** decided
+**Date:** 2026-09-26
 
-Presentation has to end with a buffer that `sceVideoOutRegisterBuffers2` has been told about and
-that radeonsi has drawn into. There are two ways to arrange that, and worklog 030 proposed the one
-that turns out not to be available.
+The platform shim creates radeonsi's colour images before the display opens, with
+`__DRI_IMAGE_USE_SCANOUT | __DRI_IMAGE_USE_FRONT_RENDERING`, and hands them to
+`oops_display_open_adopting`. Present flips the image radeonsi drew; the CPU touches no
+pixels. An image is adopted only when its allocation equals a plain `64KB_R_X` surface
+(`1920 * 1152 * 4` at 1080p); otherwise present reads back and copies.
 
-## The seam that is closed
+**Why:** the memory is the same kind (direct memory, mapped through the same calls), and
+radeonsi's `64KB_R_X` target is byte-for-byte the layout the display tiler produces
+(`tools/tiling-compare`). The readback path costs 37 ms a frame and direct scanout holds
+60 fps ([the present path record](../hardware/the-present-path-measured-fw1240.md)).
+VideoOut registration is fixed once the display opens, so the buffer is named first. The
+front-rendering flag makes radeonsi disable DCC
+(`mesa/src/gallium/drivers/radeonsi/si_texture.c:236-242`); the display is registered with
+`dcc_control = 0` and would scan compressed colour as raw pixels. Any size above plain
+`64KB_R_X` is metadata the display was not told about, hence the size gate.
 
-Worklog 030 suggested `pipe_screen::resource_from_handle` - how a Linux compositor hands Mesa a
-buffer it did not allocate. It cannot work here, and not because of anything this shim does.
-libdrm refuses before the shim is reached:
-
-```c
-case amdgpu_bo_handle_type_kms:
-case amdgpu_bo_handle_type_kms_noimport:
-        /* Importing a KMS handle in not allowed. */
-        r = -EPERM;
-        goto unlock;
-```
-
-The other two handle types are `gem_flink_name`, which needs `GEM_OPEN`, and `dma_buf_fd`, which
-needs `drmPrimeFDToHandle`. Both are mechanisms for passing a buffer *between processes*, and this
-platform has neither. Worklog 027 already recorded both as refused for that reason.
-
-So there is no route by which Mesa accepts a buffer this shim already owns. The import direction
-is closed.
-
-## The decision
-
-**The winsys allocates the colour target the way it allocates everything else, and the display is
-told about that buffer.** Registration moves from "at display open, before any GL exists" to "once
-the surface radeonsi will draw into exists".
-
-Three things make this the natural direction rather than the leftover one.
-
-**The memory is already the same kind.** `agc_display.c` allocates its scanout buffers with
-`sceKernelAllocateDirectMemory` and maps them with `sceKernelBatchMap`. `buffers.c` allocates with
-`oops_mem_alloc_direct` and maps with `oops_mem_batch_map`, which are the SDK's wrappers over the
-same two calls. A radeonsi colour target is not a different species of memory from a scanout
-buffer; it is the same allocation reached through a different front door.
-
-**The layout is already the same.** This is what worklog 031 settled, and it is the fact the
-decision rests on. A radeonsi `64KB_R_X` colour target is byte-for-byte in the layout
-`agc_tile_surface` produces, across blocks and not merely within one, with a control proving the
-comparison can see a difference. Had that come out the other way this decision would be the
-opposite one, because a buffer the display cannot interpret is not worth registering.
-
-**The alternative costs a frame-sized copy, every frame.** Blitting from radeonsi's target into a
-pre-registered buffer works and needs no new plumbing - and because the layouts match it is a
-`memcpy` rather than a retile. At 1920x1080 that is 8.3 MB per frame of pure bandwidth for
-nothing. It stays written down as the fallback if registration turns out to be constrained, not as
-the plan.
-
-## What is not established
-
-> **Answered on 2026-09-21, and the answer is no.** The first registration of a radeonsi buffer was
-> made - `VA 0x400600000`, 8896512 bytes, at slot index 2 - and refused with `0x80290001`,
-> `SCE_VIDEO_OUT_ERROR_INVALID_VALUE` (obscene D214, D301). That code names no argument, so the
-> identical call was re-issued with **one input changed**: the display's own live scanout buffer
-> at `0x4000000000`, an address VideoOut had already accepted. It was refused **identically**.
->
-> So the address is not what is rejected, and this shim does not need to place the surface in the
-> display's neighbourhood. What is rejected is the **slot index**: oops-sdk's display registers two
-> buffers when it opens, so indices 0 and 1 exist and index 2 does not. Registering a third means
-> re-registering the set, which is the display's to do rather than this shim's - see D012 step 3.
->
-> The paragraph below is left as written, because its reasoning is what made the measurement worth
-> taking and the answer worth having.
-
-**Whether `sceVideoOutRegisterBuffers2` constrains the address of a buffer it is given.**
-`agc_display.c` maps its buffers at `AGC_VM_BASE` = `0x40_0000_0000` and registers the mapped
-pointers. Nothing in that file says the address is required rather than chosen, and nothing in the
-collection has tried another one.
-
-This is bounded rather than open-ended, which is why it does not block the decision. `device_info.c`
-reports radeonsi a virtual address range of `0x2_0000_0000` to `0x400_0000_0000`, and
-`0x40_0000_0000` is inside it - so if the display does turn out to want that neighbourhood, the
-shim can place the surface there through the range it already controls, rather than needing a new
-mechanism.
-
-No request is filed. The question only becomes answerable when there is a surface to register, and
-asking it before then would mean describing a hypothetical to obSCEne instead of a measurement.
-The first attempt to register a radeonsi buffer *is* the measurement.
-
-## What this leaves for the platform shim
-
-- Registering after the first surface exists, rather than at display open, and re-registering if
-  the surface is recreated.
-- Which of the two buffers is being drawn into, and the flip. oops-sdk owns this already -
-  `sceVideoOutSubmitFlip` and a flip queue measured 26 deep (`REQ-20260909T1020Z-a51e`) - so the
-  shim schedules rather than implements.
-- ~~The format word.~~ **Closed 2026-09-17 (worklog 033).** `PIPE_FORMAT_B8G8R8A8_UNORM`.
-  `REQ-20260909T1315Z-71dc`, sweep `20260909-144348`, read the display controller through
-  `/dev/dce`: pixel format `0x80000000`, glossed linear SDR B8G8R8A8_UNORM, with a stride of
-  exactly `width * 4`. `ac_get_cb_format` maps it to `V_028C70_COLOR_8_8_8_8`, so radeonsi can
-  render to it on this generation. Two things stay open and are stated there: whether the 64-bit
-  value `agc_display.c` passes is the same encoding as the 32-bit register, and whether sRGB
-  encoding applies - the shim asks for `UNORM`, and a wrong choice there is a gamma error rather
-  than a swapped channel.
-
-## What would reverse this
-
-A measurement showing the display will only scan out of memory allocated in some way
-`oops_mem_alloc_direct` cannot produce - a particular pool, a particular alignment, a reserved
-aperture. Then the import direction becomes necessary despite being closed at the libdrm level,
-and the answer is the blit, not a patch to libdrm.
+**Rejected:**
+- Importing a display-owned buffer into Mesa: libdrm refuses KMS handle import, and the
+  other handle types need cross-process sharing the platform lacks.
+- Copying into pre-registered scanout buffers every frame: a frame-sized copy per frame.
+- Adding a buffer to an already registered set: VideoOut refuses it.

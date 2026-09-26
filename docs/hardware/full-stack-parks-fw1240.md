@@ -1,25 +1,18 @@
-# The full stack runs on hardware, and parks instead of crashing
+# Full runtime stack on hardware
 
-**2026-09-17** · firmware 12.40 · retail unit (CFI-1116A) · roadmap units 5 and 7
+Firmware 12.40, retail unit (CFI-1116A). Title `mesa-probe` (`MESA00001`), build
+`v2026-09-17 22:22`, 2026-09-17. Deployed with `pros restore`, started with `pros launch`, log
+captured with `pros logs`.
 
-This is the second hardware run of `mesa-probe` (`MESA00001`), and the first with the whole
-runtime surface in place: libm, the C locale tables, the C++ ABI shims, the fourteen `libc_absent`
-names measured absent by `-a4f2`, the GL entry points, the processor-count shim, and the parking
-ending. It was deployed with `pros restore` and started with `pros launch` on 2026-09-17 ~21:44,
-and the system log was captured with `pros logs`.
+The build carries the whole runtime surface: libm, the C locale tables, the C++ ABI shims, the
+fourteen `libc_absent` names, the GL entry points, the processor-count shim and the parking
+ending. Every import binds: there is no `PRX_NOT_RESOLVED_FUNCTION` and no fault. The title ends
+at `idle and finished` and parks; `pros ps` shows it `SLEEP` at 55 threads, stable across
+repeated samples. The startup ioctls match [the screen-created record](screen-created-fw1240.md).
 
-It matters for two reasons the 17:15 run (`screen-created-fw1240.md`) could not show:
+## Captured log
 
-1. **Every one of those changes bound and ran.** No `PRX_NOT_RESOLVED_FUNCTION`, no fault. The
-   startup path reproduces the earlier run's 35 ioctls exactly, and reaches the same screen.
-2. **The title parks instead of crashing.** The 17:15 run ended in a fault at `rip: 0x0` on
-   return from the entry point. This one ends at `idle and finished` and stays there - `pros ps`
-   showed it `SLEEP` at 55 threads, stable across repeated samples, holding steady rather than
-   winding down or faulting.
-
-## The log
-
-Captured verbatim from `pros logs`; only the surrounding shell noise is removed.
+Verbatim from `pros logs`, with the surrounding shell noise removed.
 
 ```text
 [MESA00001:MESA-PROBE] linking upstream Mesa and walking its startup path (v2026-09-17 22:22)
@@ -110,30 +103,19 @@ Captured verbatim from `pros logs`; only the surrounding shell noise is removed.
 [MESA00001:MESA-PROBE] idle and finished - close this title from the host
 ```
 
-## What the run establishes
+## Facts from the log
 
-- **The build stamp is `v2026-09-17 22:22`** - the current binary, not a stale one. `pros restore`
-  reported the eboot "not replaced" because it compares bytes-sent against bytes-stored and the
-  target unwraps SELF; the stored size matched the local post-fixup ELF exactly (28,499,624
-  bytes), and the stamp confirms it end to end.
-- **35 ioctls, answered identically to the 17:15 baseline.** The two refusals are the tolerated
-  `AMDGPU_INFO` sub-queries `0x21` (VIDEO_CAPS) and `0x22` (MAX_IBS); the driver read the `-78`,
-  continued, and created its screen.
-- **`radeonsi created a screen: the startup path is complete`** - unit 5's milestone, reproduced
-  with the full runtime stack rather than the minimal one.
-- **The processor-count shim ran, and its fallback fired.** `cpuset_getaffinity` bound (no
-  unresolved-symbol death) but returned failure at run time, so `sysconf` reported the measured
-  fallback of 14 rather than the queried mask. Mesa therefore sized its pools for 14 cores; `pros
-  ps` showing 55 threads is consistent with that and not with the old one-core fallback. The
-  affinity call failing is a new, separate finding - see the worklog.
-- **`__xuname` was reached in ordinary start-up**, as the 17:15 run also showed; the loud stub
-  reported it and the run continued.
+- The build stamp `v2026-09-17 22:22` is the deployed binary. `pros restore` reports the eboot
+  "not replaced" because it compares bytes sent against bytes stored and the target unwraps SELF;
+  the stored size matches the local post-fixup ELF (28,499,624 bytes).
+- 35 ioctls. The two refusals are the `AMDGPU_INFO` sub-queries `0x21` (VIDEO_CAPS) and `0x22`
+  (MAX_IBS); the driver reads the `-78`, continues and creates its screen.
+- `cpuset_getaffinity` binds but returns failure at run time, so `sysconf` reports the measured
+  fallback of 14 and Mesa sizes its pools for 14 cores, consistent with the 55 threads in
+  `pros ps`.
+- `__xuname` is reached in ordinary start-up; the stub reports it and the run continues.
 
-## What it does not establish
-
-Nothing about drawing. `mesa-probe` creates a screen and stops; it issues no GPU work and presents
-no frame. The `dri-probe` run that would exercise `oops_gl_create` was blocked the same session -
-the parked `MESA00001` held the big-app slot and could not be closed (`pros close`, `pros kill`
-and `pros restart-ui` all failed against it), so `pros launch DRIP00001` was refused with
-`sceSystemServiceLaunchApp: Resource temporarily unavailable`. That close-path gap is the live
-issue; see the worklog and the request filed for it.
+`mesa-probe` creates a screen and stops; it issues no GPU work and presents no frame. A parked
+`MESA00001` holds the big-app slot: `pros close`, `pros kill` and `pros restart-ui` do not end it,
+and a following `pros launch DRIP00001` is refused with
+`sceSystemServiceLaunchApp: Resource temporarily unavailable`.

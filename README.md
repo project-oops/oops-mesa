@@ -1,84 +1,54 @@
 # oops-mesa
 
-**Upstream Mesa on Prospero-generation hardware, with nothing but a shim to maintain.**
+Upstream Mesa on Prospero-generation hardware, for homebrew built on
+[oops-sdk](../oops-sdk/). Mesa is an unmodified submodule; this repository owns only what
+differs between a Linux host and the hardware (D001):
 
-OpenGL 3.3 Core and GLSL 3.30 for homebrew built on [oops-sdk](../oops-sdk/), provided by an
-unmodified upstream Mesa pinned as a submodule.
+| path | what it is |
+|---|---|
+| `mesa/` | upstream Mesa, pinned in `dependencies.mk` |
+| `patches/` | numbered patches applied to Mesa at build time, each with a header saying why |
+| `src/winsys/` | buffers, mapping, command submission and fences under libdrm (D005, D007) |
+| `src/platform/` | a DRI loader that creates GL contexts and presents to the display oops-sdk opens (D009, D010) |
+| `src/runtime/` | the C runtime Mesa stands on: thread mapping, absent-libc definitions, C++ support (D002, D006) |
+| `toolchain/` | the container build: image, meson cross file, staging scripts |
+| `tools/` | `preamble-dump` and `tiling-compare` (host tools whose outputs are tracked data), `generate-imports.sh`, `what-is-still-needed.sh`, `format.sh` |
+| `docs/` | [GL surface](docs/GL_SURFACE.md), [decisions](docs/DECISIONS.md), [roadmap](docs/ROADMAP.md), [worklog](docs/WORKLOG.md), hardware records |
 
-**The driver reports more than that, and the difference is deliberate.** `GL_VERSION` on hardware
-reads `4.6 (Compatibility Profile)`: nothing here clamps it, radeonsi derives its version from
-caps, and this part answers 4.6. That is radeonsi's claim about the hardware and not a promise
-this repository makes - 3.3 is the scope, because 3.3 is roughly what has been run. `docs/GL_SURFACE.md`
-works out from the source which parts of the advertised 4.6 are reachable and which meet a
-refusal, and `D014` says why the scope did not simply move up to meet the string.
+radeonsi reports `GL_VERSION` 4.6 on this part; the project claims what the Khronos CTS and
+the hardware tests measure (D014), and [GL_SURFACE](docs/GL_SURFACE.md) maps the advertised
+surface onto the shims.
 
-**"3.3 is the scope" is a statement about evidence and not a ceiling, and it has been read as
-one.** Nothing in this repository limits the version: the build sets no clamp, the driver answers
-4.6, and every package from `KHR-GL30` to `KHR-GL46` is registered in the conformance title. What
-3.3 means is that 3.3 is what has been *run*, and this project does not claim a capability it has
-not exercised. Whether a 4.6 context works is a measurement nobody has completed - the attempt on
-2026-09-25 crashed on a gap in the port's own entry-point table, not on anything the driver said -
-so neither "4.6 works" nor "4.6 does not" is written down anywhere here.
-
-**The Khronos CTS runs on the console as of 2026-09-25** ([the record](docs/hardware/the-khronos-cts-runs-fw1240.md)):
-`opengl-cts-4.6.8.1` unmodified, 25 packages registered, the subset chosen at run time.
-`KHR-GL30.info` is 6/6 and twenty further cases pass; one,
-`transform_feedback.draw_xfb_stream_test`, hangs the GPU and is the first conformance result that
-is about this driver rather than about the port. This repository owns only the pieces that differ
-between a Linux box and the hardware: memory, submission and fences (the winsys), presentation
-(the platform), and the C-runtime surface Mesa stands on. Mesa's OpenGL, GLSL compiler, hardware
-driver, tiling library and shader backend are consumed, never edited in place.
-
-The roadmap below says which unit of work comes next, and why that order.
-
-## What is here
-
-| path | what it is | who writes it |
-|---|---|---|
-| `mesa/` | upstream Mesa, submodule, pinned in `dependencies.mk` | upstream |
-| `patches/` | numbered patches applied to Mesa at build time, each small and explained | us |
-| `src/winsys/` | buffers, mapping, command submission, fences, over the vendor driver calls oops-sdk binds | us |
-| `src/runtime/` | the C-runtime surface Mesa stands on: the thread mapping over the vendor thread API, the absent-libc stubs, the C++ support source, and the start-up ABI symbols | us |
-| `src/platform/` | presentation through the display the SDK opens, reached through Mesa's Gallium DRI frontend (D009, D010) | us |
-| `toolchain/` | the container build: image, cross file, the pinned C-library headers | us |
-| `tools/` | host tools built against the pinned Mesa; `preamble-dump` prints the command-stream preamble radeonsi emits for this hardware and `tiling-compare` checks a radeonsi surface against oops-sdk's tiler, their outputs tracked as data | us |
-| `docs/` | decisions, roadmap, worklog | us |
-
-Each directory appears with the unit of work that fills it.
-
-## How a title consumes it
-
-Through a static SDK linked by the same `app.mk` every oops-apps title uses, packaged by
-SELFish and deployed by Prosperous. The application draws with OpenGL 3.3 (D014), reached through
-Mesa's Gallium DRI frontend rather than EGL - upstream builds EGL as a shared library a static
-title cannot link, so the loader underneath is the entry point (D010). Presentation is the
-display oops-sdk already opens. A title built this way is hosted, not freestanding: it carries
-the runtime layer this repository provides. That is a different contract from the rest of
-oops-sdk and is stated wherever the two could be confused.
-
-## Read next
-
-- [docs/ROADMAP.md](docs/ROADMAP.md): the units of work, in order, and the measurement that
-  gates the route.
-- [docs/DECISIONS.md](docs/DECISIONS.md): why a shim under Mesa rather than a driver of our own,
-  what hosts Mesa, and which driver route is tried first.
-- [docs/WORKLOG.md](docs/WORKLOG.md): what has been done, in order, with the surprises.
-- [CLAUDE.md](CLAUDE.md): the constraints this project adds to the shared OOPS conventions.
-
-## Verbs
+## Build
 
 ```sh
-./bin/oops-mesa check    # the submodule is at its pin and the tree has what CI expects
-./bin/oops-mesa build    # stage the sysroot, then configure and build Mesa in the container
-./bin/oops-mesa test     # the winsys shim's host suite
+./bin/oops-mesa check    # pin, patches, documents, formatting, generated tool outputs
+./bin/oops-mesa fmt      # format first-party C and C++
+./bin/oops-mesa build    # stage the sysroot and sources, then build Mesa in the container
+./bin/oops-mesa test     # the shims' host suite
 ./bin/oops-mesa clean
 ```
 
+The build needs Docker and the FreeBSD source checkout orbistoun uses, located by
+`OOPS_MESA_FREEBSD_SRC` (D004). `build` stages its C-library headers into
+`toolchain/sysroot/`, stages libelf, libc++, msun and the locale sources, and runs
+`toolchain/build-mesa.sh` in the image `toolchain/Dockerfile` describes (clang 21, D013).
+The output is static archives for `x86_64-unknown-freebsd` in `build/`, listed in link
+order in `build/link-order.txt`.
+
+## Use
+
+A title in oops-apps sets `USE_MESA=1`; `common/app.mk` includes `oops-mesa.mk`, links the
+archives, and packages the title with SELFish. The title creates a context with
+`oops_gl_create`, draws with OpenGL, and presents with `oops_gl_present` (declared in
+`src/platform/oops_platform.h`), and calls `oops_mesa_run_init_array` first. A title that
+links oops-mesa is hosted, not freestanding (D002). Examples are under
+`oops-apps/src/oops-mesa/`.
+
 ## Provenance
 
-Mesa is a dependency, MIT licensed, and stays a submodule. The hardware facts the shims rely on
-come from oops-sdk's oracle records and obSCEne's measurements on the hardware, with public
-sources cited beside them; see [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) for what was consulted
-and the shared [OOPS conventions](../docs/CONVENTIONS.md) for the rule.
+Mesa is MIT licensed. The hardware facts the shims rely on come from oops-sdk's oracle
+records and obSCEne's measurements; [ACKNOWLEDGEMENTS.md](ACKNOWLEDGEMENTS.md) lists what was
+consulted, and the shared [conventions](../docs/CONVENTIONS.md) state the rule.
 
 Licensed under MIT or Apache-2.0, at your option.

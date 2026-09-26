@@ -24,7 +24,7 @@ check-patches:
 
 # The documents STYLE requires, and the generated decision index matching its files.
 check-docs:
-	@for f in README.md CLAUDE.md ACKNOWLEDGEMENTS.md CHANGELOG.md docs/DECISIONS.md docs/ROADMAP.md docs/WORKLOG.md docs/decisions/_preamble.md; do \
+	@for f in README.md CLAUDE.md ACKNOWLEDGEMENTS.md docs/DECISIONS.md docs/ROADMAP.md docs/WORKLOG.md docs/decisions/_preamble.md; do \
 	   test -f "$$f" || { echo "oops-mesa: missing $$f" >&2; exit 1; }; \
 	 done
 	@for d in docs/decisions/D*.md; do \

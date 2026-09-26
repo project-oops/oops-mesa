@@ -1,16 +1,12 @@
-# Mesa's thread surface, and what the platform already answers
+# Mesa's thread surface
 
-**2026-09-14** · firmware 12.40 · roadmap unit 4's work list, computed without a hardware run
+Firmware 12.40. Computed from source, without a hardware run, 2026-09-14.
 
-Mesa does not call the platform's threads directly. It calls its own C11 threads layer, and that
-layer is the only thing in Mesa that touches `pthread_*` (`mesa/src/c11/impl/threads_posix.c` at
-the pin in `dependencies.mk`). So the runtime shim's thread surface is exactly that file's
-requirements, and it is closed: **26 functions**, listed below, plus six other names.
+Mesa's only caller of `pthread_*` is its C11 threads layer, `mesa/src/c11/impl/threads_posix.c`
+at the pin in `dependencies.mk`. That file needs 26 thread functions and six other names. Every
+one of the 26 has a vendor twin on this platform; the last column gives the evidence.
 
-Every one of the 26 has a vendor twin on this platform. **None is missing.** What varies is only
-how well each is evidenced, which the last column states.
-
-## The 26
+## The thread functions
 
 | Mesa calls | vendor twin | evidence |
 |---|---|---|
@@ -41,32 +37,20 @@ how well each is evidenced, which the last column states.
 | `pthread_mutexattr_destroy` | `scePthreadMutexattrDestroy` | orbistoun's libkernel symbol inventory |
 | `pthread_mutexattr_settype` | `scePthreadMutexattrSettype` | orbistoun's libkernel symbol inventory |
 
-Sixteen are already bound by a payload that runs. Seven more are named `present` in obSCEne's
-libkernel census of 2026-08-30 and only need a declaration. The last three appear in orbistoun's
-libkernel symbol inventory but not in obSCEne's mined census, which is a gap in the census rather
-than evidence against them; orbistoun's own suite exercises all three. They are the three to bind
-first, because they are the three that could still surprise.
+The obSCEne census is its libkernel census of 2026-08-30. The three `mutexattr` names are in
+orbistoun's libkernel symbol inventory, exercised by its own suite, and absent from the mined
+census.
 
-## The six other names the same file needs
+Three vendor twins - create, mutex init and cond init - take a trailing `const char *name` that
+the POSIX form lacks, so each binding takes its arity from the vendor declaration
+(`oops-sdk/src/thread/thread.c`), one name at a time.
 
-`clock_gettime`, `timespec_get`, `nanosleep`, `sched_yield`, `malloc`, `free`. `malloc` and
-`free` are measured bound from the platform's C library (obSCEne census, section `035-libc`).
-`sched_yield` has `scePthreadYield`, already bound by oops-sdk. The other three are unconfirmed
-and belong with unit 3's wider C-runtime list rather than here.
+## Other names
 
-## The trap this table exists to carry
+`clock_gettime`, `timespec_get`, `nanosleep`, `sched_yield`, `malloc`, `free`. `malloc` and `free`
+are measured bound from the platform's C library (obSCEne census, section `035-libc`).
+`sched_yield` maps to `scePthreadYield`, bound by oops-sdk. The other three are unconfirmed here.
 
-Three vendor twins take a trailing `const char *name` that the POSIX form has no place for:
-create, mutex init and cond init. A shim that delegates by a rule rather than per name reads a
-register the caller never set. orbistoun hit exactly this and recorded it (its D385 and D475),
-and oops-sdk's own declarations in `src/thread/thread.c` already carry the correct arity. Unit 4
-takes its arity from the vendor declaration, one name at a time, never from a pattern.
-
-## What this does not settle
-
-Whether the portable names bind directly, which would make the mapping table unnecessary. The
-portable names exist and retail titles import them, but from the `libScePosix` library, which
-obSCEne measured does not load in the app sandbox. `REQ-20260914T1443Z-3ea7` asks whether
-libkernel serves them anyway under either spelling. That request is now an optimisation and not
-a gate: this table is the answer if it comes back negative, and it is already complete enough to
-build against.
+The portable `pthread_*` names exist and retail titles import them from `libScePosix`, which
+obSCEne measures does not load in the app sandbox. Whether libkernel serves them under either
+spelling is unmeasured.
