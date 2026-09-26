@@ -1,13 +1,14 @@
 /*
  * The winsys shim's host suite.
  *
- * It runs on the build machine, so it cannot touch the GPU. What it can check is the part that
- * is decided here rather than by the hardware: that the device description carries the values
- * Mesa's own chip identification needs, that the measured fields hold the numbers the records
- * say, and above all that an unimplemented command refuses rather than quietly succeeding.
+ * It runs on the build machine, so it cannot touch the GPU. What it can check is the
+ * part that is decided here rather than by the hardware: that the device description
+ * carries the values Mesa's own chip identification needs, that the measured fields
+ * hold the numbers the records say, and above all that an unimplemented command refuses
+ * rather than quietly succeeding.
  *
- * The last one is the point. A winsys that returns success having done nothing produces a black
- * frame and no reason for it (CLAUDE.md, principle 4).
+ * The last one is the point. A winsys that returns success having done nothing produces
+ * a black frame and no reason for it (CLAUDE.md, principle 4).
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -19,15 +20,14 @@
 #include "drm-uapi/drm.h"
 #include "oops_winsys.h"
 
-/* Mesa's chip-identification macros, used rather than copied. This header includes nothing, so it
- * costs the suite no dependency on the rest of AddressLib. */
+/* Mesa's chip-identification macros, used rather than copied. This header includes
+ * nothing, so it costs the suite no dependency on the rest of AddressLib. */
 #include "amd/addrlib/src/amdgpu_asic_addr.h"
 
 static int failures;
 static int checks;
 
-static void check(int ok, const char *what)
-{
+static void check(int ok, const char *what) {
     checks++;
     if (!ok) {
         failures++;
@@ -35,27 +35,28 @@ static void check(int ok, const char *what)
     }
 }
 
-static void test_device_is_identifiable_as_gfx1013(void)
-{
+static void test_device_is_identifiable_as_gfx1013(void) {
     /*
-     * This runs Mesa's own identification rather than a copy of it. `amdgpu_asic_addr.h` has no
-     * includes at all - it is macros end to end - so the suite can use `ASICREV_IS` and
-     * `FAMILY_NV` themselves instead of transcribing `0x8F` and the range beside them.
+     * This runs Mesa's own identification rather than a copy of it.
+     * `amdgpu_asic_addr.h` has no includes at all - it is macros end to end - so the
+     * suite can use `ASICREV_IS` and `FAMILY_NV` themselves instead of transcribing
+     * `0x8F` and the range beside them.
      *
-     * That matters because transcription is how this check could pass while being wrong: the
-     * numbers were correct when they were copied and would stay correct-looking afterwards. Now a
-     * pin bump that moves the GFX1013 range fails here, which is what the old comment said it
-     * wanted and could not actually do.
+     * That matters because transcription is how this check could pass while being
+     * wrong: the numbers were correct when they were copied and would stay
+     * correct-looking afterwards. Now a pin bump that moves the GFX1013 range fails
+     * here, which is what the old comment said it wanted and could not actually do.
      *
-     * `ac_identify_chip` does exactly this pair - `device_info->family` selects the switch arm and
-     * `ASICREV_IS(device_info->external_rev, GFX1013)` picks the chip inside it - and returning
-     * false there fails the device with `AC_QUERY_GPU_INFO_UNIMPLEMENTED_HW` (worklog 021,
-     * entry 20).
+     * `ac_identify_chip` does exactly this pair - `device_info->family` selects the
+     * switch arm and `ASICREV_IS(device_info->external_rev, GFX1013)` picks the chip
+     * inside it - and returning false there fails the device with
+     * `AC_QUERY_GPU_INFO_UNIMPLEMENTED_HW` (worklog 021, entry 20).
      */
     struct drm_amdgpu_info_device dev;
     unsigned assumed = oops_winsys_device_info(&dev);
 
-    check(dev.family == FAMILY_NV, "device family is the one GFX1013 is classified inside");
+    check(dev.family == FAMILY_NV,
+          "device family is the one GFX1013 is classified inside");
     check(ASICREV_IS(dev.external_rev, GFX1013) != 0,
           "Mesa's own ASICREV_IS picks GFX1013 out of that family for this revision");
     check(assumed > 0, "the description reports how much of itself is assumed");
@@ -63,8 +64,7 @@ static void test_device_is_identifiable_as_gfx1013(void)
 
 /* Ask AMDGPU_INFO one query, into a caller-sized reply. */
 static int query_info(uint32_t query, void *out, unsigned long size,
-                      void (*fill)(struct drm_amdgpu_info *))
-{
+                      void (*fill)(struct drm_amdgpu_info *)) {
     struct drm_amdgpu_info info;
 
     memset(&info, 0, sizeof(info));
@@ -77,16 +77,22 @@ static int query_info(uint32_t query, void *out, unsigned long size,
     return oops_winsys_info(&info);
 }
 
-static void ask_gfx(struct drm_amdgpu_info *info) { info->query_hw_ip.type = AMDGPU_HW_IP_GFX; }
-static void ask_compute(struct drm_amdgpu_info *info) { info->query_hw_ip.type = AMDGPU_HW_IP_COMPUTE; }
-static void ask_me(struct drm_amdgpu_info *info) { info->query_fw.fw_type = AMDGPU_INFO_FW_GFX_ME; }
+static void ask_gfx(struct drm_amdgpu_info *info) {
+    info->query_hw_ip.type = AMDGPU_HW_IP_GFX;
+}
+static void ask_compute(struct drm_amdgpu_info *info) {
+    info->query_hw_ip.type = AMDGPU_HW_IP_COMPUTE;
+}
+static void ask_me(struct drm_amdgpu_info *info) {
+    info->query_fw.fw_type = AMDGPU_INFO_FW_GFX_ME;
+}
 
-static void test_syncobjs_are_handles_this_repository_owns(void)
-{
-    /* `amdgpu_winsys_create` creates one before it asks the device anything and treats a failure
-     * as fatal, so these gate every other answer the winsys gives (D007, worklog 020). The fence
-     * behind them is memory this shim allocated, so the handle namespace is ours and creating one
-     * touches no hardware - which is why this is testable on the build machine at all. */
+static void test_syncobjs_are_handles_this_repository_owns(void) {
+    /* `amdgpu_winsys_create` creates one before it asks the device anything and treats
+     * a failure as fatal, so these gate every other answer the winsys gives (D007,
+     * worklog 020). The fence behind them is memory this shim allocated, so the handle
+     * namespace is ours and creating one touches no hardware - which is why this is
+     * testable on the build machine at all. */
     struct drm_syncobj_create a, b;
     struct drm_syncobj_destroy d;
 
@@ -108,36 +114,37 @@ static void test_syncobjs_are_handles_this_repository_owns(void)
 
     memset(&d, 0, sizeof(d));
     d.handle = 0;
-    check(oops_winsys_syncobj_destroy(&d) == -EINVAL, "handle zero is refused, not accepted");
+    check(oops_winsys_syncobj_destroy(&d) == -EINVAL,
+          "handle zero is refused, not accepted");
 
     memset(&d, 0, sizeof(d));
     d.handle = b.handle;
     check(oops_winsys_syncobj_destroy(&d) == 0, "and the second one closes cleanly");
 }
 
-static void test_a_fence_slot_is_bounds_checked(void)
-{
+static void test_a_fence_slot_is_bounds_checked(void) {
     /*
-     * `AMDGPU_CHUNK_ID_FENCE` names a buffer and a byte offset, and submission writes the
-     * sequence number there so that `amdgpu_fence_wait` sees the submission retire without
-     * reaching `SYNCOBJ_WAIT` (worklog 028). The offset arrives from the caller, so the range is
-     * checked rather than trusted: writing past the end of the named buffer would corrupt
-     * whatever follows instead of saying so.
+     * `AMDGPU_CHUNK_ID_FENCE` names a buffer and a byte offset, and submission writes
+     * the sequence number there so that `amdgpu_fence_wait` sees the submission retire
+     * without reaching `SYNCOBJ_WAIT` (worklog 028). The offset arrives from the
+     * caller, so the range is checked rather than trusted: writing past the end of the
+     * named buffer would corrupt whatever follows instead of saying so.
      */
     union drm_amdgpu_gem_create c;
     struct drm_gem_close close_arg;
     uint32_t handle;
 
-    /* Asked for exactly one page, because the winsys rounds every buffer up to one and the
-     * boundary being checked here has to be the real end of the allocation rather than the end
-     * of what was requested. */
+    /* Asked for exactly one page, because the winsys rounds every buffer up to one and
+     * the boundary being checked here has to be the real end of the allocation rather
+     * than the end of what was requested. */
     const uint64_t page = 0x4000;
 
     memset(&c, 0, sizeof(c));
     c.in.bo_size = page;
     c.in.alignment = 256;
     c.in.domains = AMDGPU_GEM_DOMAIN_VRAM;
-    check(oops_winsys_gem_create(&c) == 0, "a buffer to hold a fence slot can be created");
+    check(oops_winsys_gem_create(&c) == 0,
+          "a buffer to hold a fence slot can be created");
     handle = c.out.handle;
 
     check(oops_winsys_bo_cpu_range(handle, 0, 8) != NULL,
@@ -158,12 +165,11 @@ static void test_a_fence_slot_is_bounds_checked(void)
           "and a closed buffer has no address any more");
 }
 
-static void test_the_part_reports_itself_as_one_memory_pool(void)
-{
-    /* `ids_flags` is four bits Mesa reads, so a zeroed field is a claim about all four rather
-     * than an absence of one (D008). The pair checked together here is the point: FUSION set and
-     * the three heaps equal are one statement about this console, and a change to either that
-     * does not change the other has broken it. */
+static void test_the_part_reports_itself_as_one_memory_pool(void) {
+    /* `ids_flags` is four bits Mesa reads, so a zeroed field is a claim about all four
+     * rather than an absence of one (D008). The pair checked together here is the
+     * point: FUSION set and the three heaps equal are one statement about this console,
+     * and a change to either that does not change the other has broken it. */
     struct drm_amdgpu_info_device dev;
     struct drm_amdgpu_memory_info mem;
 
@@ -172,25 +178,25 @@ static void test_the_part_reports_itself_as_one_memory_pool(void)
           "the part reports FUSION, so Mesa reads has_dedicated_vram as false");
     check((dev.ids_flags & AMDGPU_IDS_FLAGS_TMZ) == 0,
           "and no trusted memory, which nothing here implements");
-    check((dev.ids_flags & AMDGPU_IDS_FLAGS_PREEMPTION) == 0,
-          "and no preemption, which is the only gate on register shadowing on this part");
+    check(
+        (dev.ids_flags & AMDGPU_IDS_FLAGS_PREEMPTION) == 0,
+        "and no preemption, which is the only gate on register shadowing on this part");
     check((dev.ids_flags & AMDGPU_IDS_FLAGS_CONFORMANT_TRUNC_COORD) == 0,
           "and no conformant truncation, which keeps Mesa's gather workarounds on");
 
     memset(&mem, 0, sizeof(mem));
     check(oops_winsys_memory_info(&mem) == 0, "the memory description answers");
     check(mem.vram.total_heap_size == mem.gtt.total_heap_size &&
-          mem.vram.total_heap_size == mem.cpu_accessible_vram.total_heap_size,
+              mem.vram.total_heap_size == mem.cpu_accessible_vram.total_heap_size,
           "and reports one pool as all three heaps, which is what FUSION means");
 }
 
-static void test_the_first_question_libdrm_asks_is_answered(void)
-{
-    /* `amdgpu_device_initialize` opens with `amdgpu_get_auth` and returns its error without
-     * touching anything else, so this sits ahead of the version, ACCEL_WORKING, GB_ADDR_CONFIG
-     * and the whole of `ac_query_gpu_info`. `drmGetNodeTypeFromFd` cannot reach the render-node
-     * shortcut on a platform with no DRM major, so the ioctl is always the route taken
-     * (worklog 021). */
+static void test_the_first_question_libdrm_asks_is_answered(void) {
+    /* `amdgpu_device_initialize` opens with `amdgpu_get_auth` and returns its error
+     * without touching anything else, so this sits ahead of the version, ACCEL_WORKING,
+     * GB_ADDR_CONFIG and the whole of `ac_query_gpu_info`. `drmGetNodeTypeFromFd`
+     * cannot reach the render-node shortcut on a platform with no DRM major, so the
+     * ioctl is always the route taken (worklog 021). */
     struct drm_client c;
     struct drm_get_cap cap;
 
@@ -198,14 +204,17 @@ static void test_the_first_question_libdrm_asks_is_answered(void)
     c.idx = 0;
     c.auth = 1;
     check(oops_winsys_get_client(&c) == 0, "the client query is answered, not refused");
-    check(c.auth == 0, "unauthenticated, the same answer a render node gives without asking");
+    check(c.auth == 0,
+          "unauthenticated, the same answer a render node gives without asking");
 
     memset(&c, 0, sizeof(c));
     c.idx = 1;
-    check(oops_winsys_get_client(&c) == -EINVAL, "there is no second client to describe");
+    check(oops_winsys_get_client(&c) == -EINVAL,
+          "there is no second client to describe");
 
-    /* The one lever behind D007's binary-only syncobj: Mesa installs `timeline_wait` only if
-     * this comes back non-zero, and reports `has_timeline_syncobj` from that pointer. */
+    /* The one lever behind D007's binary-only syncobj: Mesa installs `timeline_wait`
+     * only if this comes back non-zero, and reports `has_timeline_syncobj` from that
+     * pointer. */
     memset(&cap, 0, sizeof(cap));
     cap.capability = DRM_CAP_SYNCOBJ_TIMELINE;
     cap.value = 0xdeadbeef;
@@ -216,50 +225,56 @@ static void test_the_first_question_libdrm_asks_is_answered(void)
     cap.capability = DRM_CAP_ADDFB2_MODIFIERS;
     cap.value = 0xdeadbeef;
     check(oops_winsys_get_cap(&cap) == 0, "the modifier capability is answered");
-    check(cap.value == 0, "and says none: nothing here shares a buffer between processes");
+    check(cap.value == 0,
+          "and says none: nothing here shares a buffer between processes");
 
     memset(&cap, 0, sizeof(cap));
     cap.capability = DRM_CAP_PRIME;
     cap.value = 0xdeadbeef;
-    check(oops_winsys_get_cap(&cap) == 0, "PRIME is answered, not refused - D009 settled it");
+    check(oops_winsys_get_cap(&cap) == 0,
+          "PRIME is answered, not refused - D009 settled it");
     check(cap.value == 0, "and says no cross-process buffer sharing exists here");
 
     memset(&cap, 0, sizeof(cap));
-    cap.capability = 0xffff;   /* a capability this shim has no opinion on */
-    check(oops_winsys_get_cap(&cap) == -EINVAL, "a capability nothing has decided is refused");
+    cap.capability = 0xffff; /* a capability this shim has no opinion on */
+    check(oops_winsys_get_cap(&cap) == -EINVAL,
+          "a capability nothing has decided is refused");
 }
 
-static void test_the_version_mesa_will_accept(void)
-{
-    /* Mesa's `ac_query_gpu_info` refuses below 3.54 before it asks anything else, so a lower
-     * minor stops the startup path here whatever the rest of this file answers. 54 is the
-     * minimum it accepts; everything Mesa gates on the minor sits at 55 or above, so this
-     * claims no capability. If a future pin raises the floor, this check is where it shows. */
+static void test_the_version_mesa_will_accept(void) {
+    /* Mesa's `ac_query_gpu_info` refuses below 3.54 before it asks anything else, so a
+     * lower minor stops the startup path here whatever the rest of this file answers.
+     * 54 is the minimum it accepts; everything Mesa gates on the minor sits at 55 or
+     * above, so this claims no capability. If a future pin raises the floor, this check
+     * is where it shows. */
     struct drm_version v;
 
     memset(&v, 0, sizeof(v));
     check(oops_winsys_version(&v) == 0, "the version query answers");
     check(v.version_major == 3, "the major is the one Mesa asserts");
-    check(v.version_minor >= 54, "the minor is at or above the floor Mesa refuses below");
+    check(v.version_minor >= 54,
+          "the minor is at or above the floor Mesa refuses below");
 }
 
-static void test_the_graphics_engine_is_the_one_that_answers(void)
-{
-    /* Mesa asks every IP type, skips those that refuse, and fails the device unless GFX or
-     * COMPUTE came back with a ring. It also discards a COMPUTE answer on this exact part by
-     * name, so GFX is the only route to a usable device and the only one answered. */
+static void test_the_graphics_engine_is_the_one_that_answers(void) {
+    /* Mesa asks every IP type, skips those that refuse, and fails the device unless GFX
+     * or COMPUTE came back with a ring. It also discards a COMPUTE answer on this exact
+     * part by name, so GFX is the only route to a usable device and the only one
+     * answered. */
     struct drm_amdgpu_info_hw_ip ip;
 
     memset(&ip, 0, sizeof(ip));
     check(query_info(AMDGPU_INFO_HW_IP_INFO, &ip, sizeof(ip), ask_gfx) == 0,
           "the graphics engine answers");
-    check(ip.available_rings != 0, "it has at least one ring, or Mesa fails the device");
+    check(ip.available_rings != 0,
+          "it has at least one ring, or Mesa fails the device");
     check(ip.hw_ip_version_major == 10, "it reports the GFX10 generation");
-    /* The minor is load-bearing and is easy to read as decoration. `ac_identify_chip` derives
-     * `gfx_level` from this pair by an if-chain with no default: 10.1 is GFX10 and 10.3 is
-     * GFX10_3, and *10.0 matches nothing*, which falls through to "Unknown gfx version" and
-     * fails the device. GFX1013 is a 10.1 part (worklog 021). */
-    check(ip.hw_ip_version_minor == 1, "and the 10.1 minor, which is what selects GFX10");
+    /* The minor is load-bearing and is easy to read as decoration. `ac_identify_chip`
+     * derives `gfx_level` from this pair by an if-chain with no default: 10.1 is GFX10
+     * and 10.3 is GFX10_3, and *10.0 matches nothing*, which falls through to "Unknown
+     * gfx version" and fails the device. GFX1013 is a 10.1 part (worklog 021). */
+    check(ip.hw_ip_version_minor == 1,
+          "and the 10.1 minor, which is what selects GFX10");
 
     memset(&ip, 0, sizeof(ip));
     check(query_info(AMDGPU_INFO_HW_IP_INFO, &ip, sizeof(ip), ask_compute) == -ENOSYS,
@@ -267,11 +282,10 @@ static void test_the_graphics_engine_is_the_one_that_answers(void)
     check(ip.available_rings == 0, "and writes nothing into the reply when it refuses");
 }
 
-static void test_firmware_versions_answer_conservatively(void)
-{
-    /* Nothing has measured these and Mesa treats a refusal as fatal, so zero is answered. Zero
-     * is the safe end of every gate Mesa keys off them on this part; a non-zero value here
-     * would be a claim nothing supports. */
+static void test_firmware_versions_answer_conservatively(void) {
+    /* Nothing has measured these and Mesa treats a refusal as fatal, so zero is
+     * answered. Zero is the safe end of every gate Mesa keys off them on this part; a
+     * non-zero value here would be a claim nothing supports. */
     struct drm_amdgpu_info_firmware fw;
 
     memset(&fw, 0, sizeof(fw));
@@ -282,45 +296,53 @@ static void test_firmware_versions_answer_conservatively(void)
     check(fw.feature == 0, "and no feature bits");
 }
 
-static void test_gb_addr_config_is_the_derived_layout(void)
-{
-    /* The register faults a userspace read, so this value is derived rather than measured: the
-     * fields addrlib reads are inverted against oops-sdk's tiler, which draws correctly on
-     * hardware. drm_device.c carries the derivation. What is checked here is the two fields
-     * that derivation actually pins, not the literal - a different literal that describes the
-     * same layout is allowed to pass, and one that describes a different layout must not. */
+static void test_gb_addr_config_is_the_derived_layout(void) {
+    /* The register faults a userspace read, so this value is derived rather than
+     * measured: the fields addrlib reads are inverted against oops-sdk's tiler, which
+     * draws correctly on hardware. drm_device.c carries the derivation. What is checked
+     * here is the two fields that derivation actually pins, not the literal - a
+     * different literal that describes the same layout is allowed to pass, and one that
+     * describes a different layout must not. */
     uint32_t gb = oops_winsys_gb_addr_config();
 
-    check(gb != 0, "the register has a value to answer with, so the read does not refuse");
+    check(gb != 0,
+          "the register has a value to answer with, so the read does not refuse");
     check((gb & 0x7u) == 0x4u, "NUM_PIPES is the derived 16 pipes");
-    check(((gb >> 3) & 0x7u) == 0u, "PIPE_INTERLEAVE_SIZE is the 256 B addrlib has a pattern for");
+    check(((gb >> 3) & 0x7u) == 0u,
+          "PIPE_INTERLEAVE_SIZE is the 256 B addrlib has a pattern for");
 }
 
-static void test_measured_fields_match_their_records(void)
-{
+static void test_measured_fields_match_their_records(void) {
     struct drm_amdgpu_info_device dev;
     oops_winsys_device_info(&dev);
 
-    /* oops-sdk's oracle record, from the end-of-pipe GPU clock: 100 MHz, reported in kHz. */
-    check(dev.gpu_counter_freq == 100000, "GPU counter frequency is the measured 100 MHz");
+    /* oops-sdk's oracle record, from the end-of-pipe GPU clock: 100 MHz, reported in
+     * kHz. */
+    check(dev.gpu_counter_freq == 100000,
+          "GPU counter frequency is the measured 100 MHz");
     /* obSCEne 135-sysctl on firmware 12.40: hw.pagesize = 0x4000. */
     check(dev.gart_page_size == 0x4000, "page size is the measured 16 KiB");
-    check(dev.virtual_address_alignment == 0x4000, "address alignment matches the page size");
+    check(dev.virtual_address_alignment == 0x4000,
+          "address alignment matches the page size");
 }
 
-static void test_memory_is_the_kernels_answer(void)
-{
-    /* platform_double.c answers the direct-memory size with 4 GiB, a figure deliberately unlike
-     * the console's 12 GiB, so a constant left in the winsys would show up here as a mismatch. */
+static void test_memory_is_the_kernels_answer(void) {
+    /* platform_double.c answers the direct-memory size with 4 GiB, a figure
+     * deliberately unlike the console's 12 GiB, so a constant left in the winsys would
+     * show up here as a mismatch. */
     struct drm_amdgpu_memory_info mem;
     union drm_amdgpu_gem_create c;
 
-    check(oops_winsys_memory_info(&mem) == 0, "the memory description answers when the kernel can be asked");
-    check(mem.vram.total_heap_size == (uint64_t)1 << 32, "its size is the kernel's, not a constant");
+    check(oops_winsys_memory_info(&mem) == 0,
+          "the memory description answers when the kernel can be asked");
+    check(mem.vram.total_heap_size == (uint64_t)1 << 32,
+          "its size is the kernel's, not a constant");
     check(mem.cpu_accessible_vram.total_heap_size == mem.vram.total_heap_size,
           "all of it is CPU-visible, because any buffer can be mapped for the CPU");
-    check(mem.gtt.total_heap_size == mem.vram.total_heap_size, "and GTT is the same one pool");
-    check(mem.vram.heap_usage == 0, "with nothing allocated, nothing is counted as used");
+    check(mem.gtt.total_heap_size == mem.vram.total_heap_size,
+          "and GTT is the same one pool");
+    check(mem.vram.heap_usage == 0,
+          "with nothing allocated, nothing is counted as used");
 
     memset(&c, 0, sizeof(c));
     c.in.bo_size = 0x8000;
@@ -335,8 +357,7 @@ static void test_memory_is_the_kernels_answer(void)
     check(mem.gtt.heap_usage == 0, "and stops being counted once it is closed");
 }
 
-static void test_unimplemented_commands_refuse(void)
-{
+static void test_unimplemented_commands_refuse(void) {
     int fd = oops_winsys_open();
     char arg[512];
 
@@ -357,13 +378,13 @@ static void test_unimplemented_commands_refuse(void)
     check(oops_winsys_ioctl(fd, 0xdeadbeef, arg) == -EINVAL,
           "a command this shim does not know is refused, not ignored");
     check(oops_winsys_close(fd) == 0, "close accepts the descriptor open returned");
-    check(oops_winsys_close(fd + 1) == -EBADF, "close refuses a descriptor it never gave out");
+    check(oops_winsys_close(fd + 1) == -EBADF,
+          "close refuses a descriptor it never gave out");
 }
 
-static void test_version_identifies_as_amdgpu(void)
-{
-    /* libdrm compares this against "amdgpu" and refuses the device otherwise, so it is the
-     * single string the whole stack depends on. */
+static void test_version_identifies_as_amdgpu(void) {
+    /* libdrm compares this against "amdgpu" and refuses the device otherwise, so it is
+     * the single string the whole stack depends on. */
     struct drm_version v;
     char name[16], date[16], desc[80];
 
@@ -375,20 +396,23 @@ static void test_version_identifies_as_amdgpu(void)
 
     memset(&v, 0, sizeof(v));
     memset(name, 0, sizeof(name));
-    v.name = name; v.name_len = sizeof(name);
-    v.date = date; v.date_len = sizeof(date);
-    v.desc = desc; v.desc_len = sizeof(desc);
+    v.name = name;
+    v.name_len = sizeof(name);
+    v.date = date;
+    v.date_len = sizeof(date);
+    v.desc = desc;
+    v.desc_len = sizeof(desc);
     check(oops_winsys_version(&v) == 0, "the version query answers a filled request");
-    check(strcmp(name, "amdgpu") == 0, "the driver names itself amdgpu, which libdrm requires");
+    check(strcmp(name, "amdgpu") == 0,
+          "the driver names itself amdgpu, which libdrm requires");
 }
 
-static void test_a_buffer_through_its_whole_life(void)
-{
+static void test_a_buffer_through_its_whole_life(void) {
     /*
-     * Create, ask about it, map it, give it an address, ask whether the GPU has finished with
-     * it, name it in a list, close it, and find every one of those refuses afterwards. The
-     * platform calls underneath are the stand-in in platform_double.c; everything being checked
-     * here is the winsys's own bookkeeping.
+     * Create, ask about it, map it, give it an address, ask whether the GPU has
+     * finished with it, name it in a list, close it, and find every one of those
+     * refuses afterwards. The platform calls underneath are the stand-in in
+     * platform_double.c; everything being checked here is the winsys's own bookkeeping.
      */
     union drm_amdgpu_gem_create c;
     union drm_amdgpu_gem_mmap m;
@@ -402,7 +426,7 @@ static void test_a_buffer_through_its_whole_life(void)
     void *cpu;
 
     memset(&c, 0, sizeof(c));
-    c.in.bo_size = 5000;                 /* deliberately not a page multiple */
+    c.in.bo_size = 5000; /* deliberately not a page multiple */
     c.in.alignment = 256;
     c.in.domains = AMDGPU_GEM_DOMAIN_VRAM;
     check(oops_winsys_gem_create(&c) == 0, "a buffer can be created");
@@ -414,9 +438,12 @@ static void test_a_buffer_through_its_whole_life(void)
     op.op = AMDGPU_GEM_OP_GET_GEM_CREATE_INFO;
     op.value = (uint64_t)(uintptr_t)&created;
     check(oops_winsys_gem_op(&op) == 0, "how it was created can be asked back");
-    check(created.bo_size == 0x4000, "the size it reports is the page-rounded one it really has");
-    check(created.alignment >= 0x4000, "the alignment is at least a page, whatever was asked");
-    check(created.domains == AMDGPU_GEM_DOMAIN_VRAM, "the domain it was created with is kept");
+    check(created.bo_size == 0x4000,
+          "the size it reports is the page-rounded one it really has");
+    check(created.alignment >= 0x4000,
+          "the alignment is at least a page, whatever was asked");
+    check(created.domains == AMDGPU_GEM_DOMAIN_VRAM,
+          "the domain it was created with is kept");
 
     memset(&op, 0, sizeof(op));
     op.handle = handle;
@@ -436,35 +463,43 @@ static void test_a_buffer_through_its_whole_life(void)
     va.va_address = 0x0000000200000000ull;
     va.map_size = 0x4000;
     va.flags = AMDGPU_VM_PAGE_READABLE | AMDGPU_VM_PAGE_WRITEABLE;
-    check(oops_winsys_gem_va(&va) == 0, "it can be mapped at an address chosen by the caller");
+    check(oops_winsys_gem_va(&va) == 0,
+          "it can be mapped at an address chosen by the caller");
 
     va.offset_in_bo = 64;
     check(oops_winsys_gem_va(&va) == -ENOSYS,
           "a partial mapping is refused rather than quietly mapping the whole buffer");
 
     /*
-     * Regression (worklog 053): the frontend never calls gem_va directly - it issues the ioctl,
-     * and libdrm encodes GEM_VA as _IOWR through drmCommandWriteRead, not the header's DRM_IOW. The
-     * dispatcher has to route that wire encoding, or every real VA map is refused as an unknown
-     * command and no context is ever made. Undo the map above through that encoding to prove it.
+     * Regression (worklog 053): the frontend never calls gem_va directly - it issues
+     * the ioctl, and libdrm encodes GEM_VA as _IOWR through drmCommandWriteRead, not
+     * the header's DRM_IOW. The dispatcher has to route that wire encoding, or every
+     * real VA map is refused as an unknown command and no context is ever made. Undo
+     * the map above through that encoding to prove it.
      */
     {
-        unsigned long iowr = DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_VA,
-                                      struct drm_amdgpu_gem_va);
-        int devfd = dup(2);   /* a real fd is served past the gate, as the dup-fd test establishes */
-        check(iowr != (unsigned long)DRM_IOCTL_AMDGPU_GEM_VA,
-              "libdrm's _IOWR wire encoding of GEM_VA is not the header's DRM_IOW macro");
+        unsigned long iowr =
+            DRM_IOWR(DRM_COMMAND_BASE + DRM_AMDGPU_GEM_VA, struct drm_amdgpu_gem_va);
+        int devfd = dup(
+            2); /* a real fd is served past the gate, as the dup-fd test establishes */
+        check(
+            iowr != (unsigned long)DRM_IOCTL_AMDGPU_GEM_VA,
+            "libdrm's _IOWR wire encoding of GEM_VA is not the header's DRM_IOW macro");
         va.offset_in_bo = 0;
         va.operation = AMDGPU_VA_OP_UNMAP;
         check(devfd >= 0 && oops_winsys_ioctl(devfd, iowr, &va) == 0,
-              "the _IOWR encoding libdrm actually sends is dispatched to gem_va, not refused");
-        if (devfd >= 0) close(devfd);
+              "the _IOWR encoding libdrm actually sends is dispatched to gem_va, not "
+              "refused");
+        if (devfd >= 0)
+            close(devfd);
     }
 
     memset(&w, 0, sizeof(w));
     w.in.handle = handle;
-    check(oops_winsys_gem_wait_idle(&w) == 0, "whether the GPU has finished with it can be asked");
-    check(w.out.status == 0, "and it is idle, because submission waits for its own fence");
+    check(oops_winsys_gem_wait_idle(&w) == 0,
+          "whether the GPU has finished with it can be asked");
+    check(w.out.status == 0,
+          "and it is idle, because submission waits for its own fence");
 
     memset(&l, 0, sizeof(l));
     entry.bo_handle = handle;
@@ -477,24 +512,26 @@ static void test_a_buffer_through_its_whole_life(void)
 
     check(oops_winsys_gem_close(handle) == 0, "the buffer can be closed");
 
-    /* Everything must now refuse. A stale handle that still works is the bug that a buffer list
-     * exists to catch, and it was a real one here (worklog 007). */
+    /* Everything must now refuse. A stale handle that still works is the bug that a
+     * buffer list exists to catch, and it was a real one here (worklog 007). */
     memset(&w, 0, sizeof(w));
     w.in.handle = handle;
-    check(oops_winsys_gem_wait_idle(&w) == -EINVAL, "asking about a closed buffer is refused");
+    check(oops_winsys_gem_wait_idle(&w) == -EINVAL,
+          "asking about a closed buffer is refused");
     memset(&op, 0, sizeof(op));
     op.handle = handle;
     op.op = AMDGPU_GEM_OP_GET_GEM_CREATE_INFO;
-    check(oops_winsys_gem_op(&op) == -EINVAL, "an operation on a closed buffer is refused");
+    check(oops_winsys_gem_op(&op) == -EINVAL,
+          "an operation on a closed buffer is refused");
     check(oops_winsys_gem_close(handle) == -EINVAL, "and closing it twice is refused");
 
     memset(&c, 0, sizeof(c));
     check(oops_winsys_gem_create(&c) == -EINVAL, "a zero-sized buffer is refused");
-    check(c.out.handle == 0, "and hands back no handle even though the argument is a union");
+    check(c.out.handle == 0,
+          "and hands back no handle even though the argument is a union");
 }
 
-static void test_contexts_track_what_they_can(void)
-{
+static void test_contexts_track_what_they_can(void) {
     union drm_amdgpu_ctx c, d;
     uint32_t id;
 
@@ -504,8 +541,8 @@ static void test_contexts_track_what_they_can(void)
     id = c.out.alloc.ctx_id;
     check(id != 0, "and it comes back with a handle that is not the none handle");
 
-    /* The reset answer must mean something. With nothing gone wrong it says so; the hang
-     * counter is what submission feeds when a stream fails to retire. */
+    /* The reset answer must mean something. With nothing gone wrong it says so; the
+     * hang counter is what submission feeds when a stream fails to retire. */
     memset(&d, 0, sizeof(d));
     d.in.op = AMDGPU_CTX_OP_QUERY_STATE;
     d.in.ctx_id = id;
@@ -526,7 +563,8 @@ static void test_contexts_track_what_they_can(void)
     memset(&d, 0, sizeof(d));
     d.in.op = AMDGPU_CTX_OP_SET_STABLE_PSTATE;
     d.in.ctx_id = id;
-    check(oops_winsys_ctx(&d) == -EPERM, "pinning a clock state is refused, not ignored");
+    check(oops_winsys_ctx(&d) == -EPERM,
+          "pinning a clock state is refused, not ignored");
 
     memset(&d, 0, sizeof(d));
     d.in.op = AMDGPU_CTX_OP_FREE_CTX;
@@ -538,8 +576,7 @@ static void test_contexts_track_what_they_can(void)
     check(oops_winsys_ctx(&d) == -EINVAL, "and is gone afterwards");
 }
 
-static void test_buffer_lists_check_their_handles(void)
-{
+static void test_buffer_lists_check_their_handles(void) {
     union drm_amdgpu_bo_list l;
     struct drm_amdgpu_bo_list_entry entry;
 
@@ -549,8 +586,8 @@ static void test_buffer_lists_check_their_handles(void)
     check(oops_winsys_bo_list(&l) == 0, "an empty buffer list is accepted");
     check(l.out.list_handle != 0, "and comes back with a handle");
 
-    /* The point of the list here is the check. On the host no buffer can exist, so any handle
-     * named in a list is stale, and the refusal is what this asserts. */
+    /* The point of the list here is the check. On the host no buffer can exist, so any
+     * handle named in a list is stale, and the refusal is what this asserts. */
     memset(&l, 0, sizeof(l));
     entry.bo_handle = 7;
     entry.bo_priority = 0;
@@ -564,29 +601,31 @@ static void test_buffer_lists_check_their_handles(void)
     memset(&l, 0, sizeof(l));
     l.in.operation = AMDGPU_BO_LIST_OP_DESTROY;
     l.in.list_handle = 999;
-    check(oops_winsys_bo_list(&l) == -EINVAL, "destroying a list that was never made is refused");
+    check(oops_winsys_bo_list(&l) == -EINVAL,
+          "destroying a list that was never made is refused");
 }
 
-static void test_a_duplicated_device_fd_is_served(void)
-{
+static void test_a_duplicated_device_fd_is_served(void) {
     /*
-     * The DRI frontend dups the device fd before it uses it - `pipe_loader_drm_probe_fd` calls
-     * `os_dupfd_cloexec` first thing - so radeonsi's ioctls arrive on a descriptor other than the
-     * one `oops_winsys_open` returned. The gate has to serve that dup while still refusing a
-     * number that was never a descriptor.
+     * The DRI frontend dups the device fd before it uses it -
+     * `pipe_loader_drm_probe_fd` calls `os_dupfd_cloexec` first thing - so radeonsi's
+     * ioctls arrive on a descriptor other than the one `oops_winsys_open` returned. The
+     * gate has to serve that dup while still refusing a number that was never a
+     * descriptor.
      *
-     * That distinction is the whole of the worklog 049 fix, and it cost a scarce hardware run to
-     * find (a synthetic token could not be dupped at all, so the frontend declined the screen
-     * before a single ioctl). It is checked here so it cannot silently regress: a real open fd
-     * standing in for the frontend's dup must get past the gate, and the same number once closed
-     * must be refused.
+     * That distinction is the whole of the worklog 049 fix, and it cost a scarce
+     * hardware run to find (a synthetic token could not be dupped at all, so the
+     * frontend declined the screen before a single ioctl). It is checked here so it
+     * cannot silently regress: a real open fd standing in for the frontend's dup must
+     * get past the gate, and the same number once closed must be refused.
      *
-     * An unknown command (`0xdeadbeef`) is used rather than a real one so the check exercises only
-     * the gate and the dispatcher's refusal, never a command handler that would reach for the
-     * vendor driver the host build does not have.
+     * An unknown command (`0xdeadbeef`) is used rather than a real one so the check
+     * exercises only the gate and the dispatcher's refusal, never a command handler
+     * that would reach for the vendor driver the host build does not have.
      */
     char arg[512];
-    int dupfd = dup(2);        /* a real, open descriptor - exactly how the target's open() gets one */
+    int dupfd =
+        dup(2); /* a real, open descriptor - exactly how the target's open() gets one */
 
     memset(arg, 0, sizeof(arg));
     check(dupfd >= 0, "a descriptor can be duplicated on the host");
@@ -595,15 +634,15 @@ static void test_a_duplicated_device_fd_is_served(void)
     }
 
     check(oops_winsys_ioctl(dupfd, 0xdeadbeef, arg) == -EINVAL,
-          "an open duplicate of the device fd is served past the gate, not refused as a bad fd");
+          "an open duplicate of the device fd is served past the gate, not refused as "
+          "a bad fd");
 
     close(dupfd);
     check(oops_winsys_ioctl(dupfd, 0xdeadbeef, arg) == -EBADF,
           "once closed, that number is refused as a descriptor that was never opened");
 }
 
-int main(void)
-{
+int main(void) {
     printf("oops-mesa winsys host suite\n");
     test_version_identifies_as_amdgpu();
     test_a_buffer_through_its_whole_life();
