@@ -1,0 +1,36 @@
+name: check
+
+# The standard OOPS preamble: check out the collection, this repository into it with its
+# Mesa submodule, then bootstrap the siblings (oops-sdk). See the collection's docs/BUILDING.md.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: pin, patches, documents, formatting, generated outputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/OOPS
+          path: OOPS
+      - uses: actions/checkout@v4
+        with:
+          path: OOPS/oops-mesa
+          submodules: true
+
+      - name: Siblings this build needs
+        run: OOPS/bin/oops bootstrap oops-mesa
+        env:
+          OOPS_CI_TOKEN: ${{ secrets.OOPS_CI_TOKEN }}
+
+      # Relays to ./bin/oops-mesa check. The Mesa build and the hardware tests need the
+      # toolchain image, the pinned FreeBSD checkout and the hardware, so CI does not run them.
+      - name: oops check oops-mesa
+        run: OOPS/bin/oops check oops-mesa

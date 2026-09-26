@@ -1,39 +1,17 @@
 #!/usr/bin/env bash
-# oops-mesa - the dev CLI for the Mesa shim.
+# oops-mesa - the dev CLI for the Mesa shims. `oops check oops-mesa` runs the same `check`.
 #
-# The same verbs every OOPS repository carries, so `oops check oops-mesa` and
-# `./bin/oops-mesa check` are one command reached two ways:
-#
-#   ./bin/oops-mesa check          # the submodule is at its pin and the tree has what CI expects
-#   ./bin/oops-mesa build          # stage the sysroot, then configure and build Mesa in the container
-#   ./bin/oops-mesa test           # the shims' host suite
-#   ./bin/oops-mesa clean          # remove build output
-#
-# # Why build and test fail today
-#
-# There is nothing behind them, and a verb that runs nothing and exits 0 is worse than a
-# missing one: `oops all` would report this repository green without having checked anything
-# (oops-sdk#D001). They fail loudly below with what would have to exist first, and they become
-# real verbs with the roadmap units that create it.
+#   ./bin/oops-mesa check   pin, patches, documents, formatting, generated tool outputs
+#   ./bin/oops-mesa fmt     format first-party C and C++ in place
+#   ./bin/oops-mesa build   stage the sysroot, then configure and build Mesa in the container
+#   ./bin/oops-mesa test    the shims' host suite
+#   ./bin/oops-mesa clean   remove build output
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# The check is what CI can answer without a container or the hardware: the Mesa submodule is
-# present and at the commit dependencies.mk pins, every patch under patches/ carries a header,
-# and the documents the conventions require exist. `make check` carries the details so there
-# is one place to change them.
-check() { make check; }
-clean() { make clean; }
-
-# The Mesa build. Container first, as everywhere in the collection: the image carries meson,
-# ninja and clang 18, and none of it is installed on the machine. The sysroot is staged from the
-# checkout D004 pins before the container starts, because staging needs that checkout and the
-# container cannot see it.
-#
-# This does not yet produce a linkable Mesa. radeonsi requires libdrm, which on this platform is
-# the winsys shim of roadmap unit 5; until that exists the configure stops there and says so,
-# which is the honest report and not a failure of the build script (CLAUDE.md, principle 4).
+# The Mesa build runs in the toolchain container. The sysroot and sources are staged on the
+# host first, because staging reads a checkout the container cannot see.
 build() {
     local image
     image=$(sed -n 's/^TOOLCHAIN_IMAGE *:= *//p' dependencies.mk)
@@ -52,46 +30,26 @@ build() {
         docker build -t "$image" toolchain/
     fi
 
-    # Two shells to satisfy. Git Bash on Windows rewrites anything that looks like a Unix path
-    # in an argument, so `-w /w` reaches docker as a drive letter; MSYS_NO_PATHCONV stops that
-    # and means nothing anywhere else. The mount source has to be the path the Windows daemon
-    # understands, which `pwd -W` gives and plain `pwd` does not.
+    # Git Bash rewrites Unix-looking arguments; `pwd -W` gives the path the Windows daemon mounts.
     local host_pwd
-    if host_pwd=$(pwd -W 2>/dev/null); then :; else host_pwd=$(pwd); fi
+    host_pwd=$(pwd -W 2>/dev/null || pwd)
 
     MSYS_NO_PATHCONV=1 docker run --rm -v "$host_pwd:/w" -w /w "$image" bash toolchain/build-mesa.sh
 }
 
-# The shims. host suite, which is real now that src/winsys exists.
-test_suite() { make test; }
-
-unwired() {
-    cat >&2 <<MSG
-oops-mesa: no '$1' verb yet.
-
-Nothing implements it, and this script will not exit 0 as though it had:
-
-  lint   needs a linter chosen and wired.
-  fmt    needs a .clang-format in this repository.
-
-Run './bin/oops-mesa check' for the gate that does exist.
-MSG
-    exit 1
-}
-
 usage() {
-    sed -n '2,11p' "$0" | sed 's|^# \{0,1\}||'
+    sed -n '2,9p' "$0" | sed 's|^# \{0,1\}||'
     exit "${1:-0}"
 }
 
 cmd="${1:-check}"
 shift || true
 case "$cmd" in
-    check) check ;;
-    clean) clean ;;
+    check) make check ;;
+    fmt) bash tools/format.sh ;;
+    clean) make clean ;;
     build) build ;;
-    test) test_suite ;;
-    lint | fmt | doc) unwired "$cmd" ;;
+    test) make test ;;
     -h | --help | help) usage ;;
     *)
         printf 'oops-mesa: unknown verb %s\n\n' "$cmd" >&2
