@@ -1,21 +1,10 @@
 /*
- * Contexts and buffer lists: the two things radeonsi asks for before its first draw.
+ * Contexts and buffer lists, the two objects radeonsi creates before its first draw.
  *
- * Neither has a direct equivalent on this platform, and the temptation with both is to
- * return a handle and forget about it. That is the shape of bug this collection keeps
- * finding: a call that succeeds having done nothing, and a failure much later with no
- * line pointing back here. So each does the work that is actually available to it.
- *
- *   A context on Linux is a scheduling entity with a priority and a reset history. This
- * platform exposes one queue, so a context cannot carry a priority anywhere. What it
- * can carry is the reset history, because the shim already knows when a submission
- * failed to retire.
- *
- *   A buffer list on Linux tells the kernel which buffers a submission touches, so it
- * can make them resident. Everything allocated here is resident the moment it exists,
- * so there is nothing to make resident - but the list is still a statement about which
- * handles are live, and checking it turns a stale handle into a refusal here instead of
- * a GPU fault later.
+ * The platform exposes one queue, so a context carries no priority; it carries the
+ * reset history, from submissions that failed to retire. Every buffer is resident from
+ * creation, so a buffer list makes nothing resident; it checks that each handle is
+ * live, which turns a stale handle into a refusal here instead of a GPU fault later.
  */
 
 #include <errno.h>
@@ -54,11 +43,8 @@ static struct oops_winsys_ctx *ctx_of(uint32_t id) {
     return c->live ? c : NULL;
 }
 
-/*
- * Called by submission when a stream fails to retire. This is the only way this shim
- * learns that anything went wrong on the GPU, and it is what makes the reset answer
- * below mean something.
- */
+/* Called by submission when a stream fails to retire: the only GPU failure this shim
+ * observes, and the source of the reset answer below. */
 void oops_winsys_ctx_note_hang(uint32_t ctx_id) {
     struct oops_winsys_ctx *c = ctx_of(ctx_id);
     if (c) {
@@ -108,17 +94,8 @@ int oops_winsys_ctx(union drm_amdgpu_ctx *arg) {
 
     case AMDGPU_CTX_OP_QUERY_STATE:
     case AMDGPU_CTX_OP_QUERY_STATE2: {
-        /*
-         * What radeonsi does with this is decide whether to throw the context away and
-         * start again, so a wrong answer is expensive in both directions.
-         *
-         * `hangs` is honest: it counts submissions that did not retire, which is the
-         * one kind of failure this shim can observe. `reset_status` says a reset
-         * happened when one has, and says nothing happened otherwise - which is the
-         * truthful reading of "this shim saw no failed submission", not a claim that
-         * the GPU is definitely healthy. If the driver ever gains a way to be told
-         * about a reset it did not cause, that belongs here.
-         */
+        /* radeonsi decides from this whether to recreate the context. NO_RESET means
+         * this shim saw no failed submission, not that the GPU is known healthy. */
         struct oops_winsys_ctx *c = ctx_of(id);
         if (!c) {
             return -EINVAL;
@@ -135,16 +112,16 @@ int oops_winsys_ctx(union drm_amdgpu_ctx *arg) {
         if (!c) {
             return -EINVAL;
         }
-        /* Clock states are the system's business on this platform and a title does not
-         * set them. Reporting NONE is accurate: no stable state has been pinned. */
+        /* Clock states belong to the system and a title does not set them, so no stable
+         * state is pinned. */
         memset(&arg->out, 0, sizeof(arg->out));
         arg->out.pstate.flags = AMDGPU_CTX_STABLE_PSTATE_NONE;
         return 0;
     }
 
     case AMDGPU_CTX_OP_SET_STABLE_PSTATE:
-        /* Refused rather than accepted-and-ignored. A caller pinning a clock state and
-         * getting success would reasonably believe the clocks were pinned. */
+        /* Refused rather than ignored: success would tell the caller the clocks were
+         * pinned. */
         oops_winsys_log(
             "pinning a stable clock state is not something a title may do here");
         return -EPERM;
@@ -168,12 +145,8 @@ int oops_winsys_bo_list(union drm_amdgpu_bo_list *arg) {
             return -EINVAL;
         }
 
-        /*
-         * Nothing here has to be made resident, so the useful work is the check. Every
-         * handle in the list is looked up now; a stale one becomes a refusal with a
-         * number in it, rather than a GPU fault in a later frame with nothing pointing
-         * back to the list that named it.
-         */
+        /* Nothing needs making resident, so the work is the check: a stale handle is
+         * refused here, by number, instead of faulting the GPU in a later frame. */
         for (uint32_t i = 0; i < count; i++) {
             const struct drm_amdgpu_bo_list_entry *e =
                 (const struct drm_amdgpu_bo_list_entry *)((const char *)entries +

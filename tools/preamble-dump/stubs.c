@@ -1,8 +1,7 @@
 /* Link-time support for the preamble generator: the register-name tables Mesa's debug
- * code reads (instantiated here, once), and stand-ins for two functions the generator
- * references on paths this tool never takes: the GFX6-8 raster-config split and the
- * GFX10.3 pixel-shader CU mask. Each stand-in aborts with its name so a change in Mesa
- * that starts calling one shows up as a failure and not as a silent zero. */
+ * code reads, instantiated once, and stand-ins for functions referenced only on paths
+ * this tool never takes. Each stand-in aborts with its name, so a Mesa change that
+ * starts calling one fails loudly instead of returning zero. */
 #include <stdio.h>
 #include <stdlib.h>
 #include "ac_gpu_info.h"

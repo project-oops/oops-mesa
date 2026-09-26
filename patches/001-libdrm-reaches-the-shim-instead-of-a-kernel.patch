@@ -1,38 +1,15 @@
 # 001-libdrm-reaches-the-shim-instead-of-a-kernel.patch
 #
 # What it changes
-#   Three call sites in libdrm, all guarded by OOPS_MESA_WINSYS so the patch is inert anywhere
-#   else. drmIoctl calls the shim instead of ioctl(2); drm_mmap calls it instead of mmap(2); and
-#   device initialisation keeps the descriptor it was given rather than duplicating it with
-#   fcntl(F_DUPFD_CLOEXEC). Nothing else is touched, and no behaviour changes when the define is
-#   off.
-#
-#   The third is there because **this platform does not implement fcntl-based duplication at
-#   all**: `F_DUPFD` and `F_DUPFD_CLOEXEC` both return EINVAL, measured on hardware even for a
-#   genuine open regular file (worklog 049, three runs). So the dup cannot succeed whatever the
-#   descriptor is, and leaving it in place would fail device initialisation before a single ioctl.
-#   Keeping the fd leaves dev->fd equal to dev->flink_fd, which is what libdrm's own release path
-#   already expects, so it closes once and that close is a no-op in the shim.
-#
-#   This reason was restated on 2026-09-21. It previously read "the descriptor is a token naming
-#   the one device this shim serves rather than a kernel object, so there is nothing to
-#   duplicate" - true when the patch was written, and false since worklog 049 made
-#   `oops_winsys_open` return a real dup-able fd. The hunk is still required; only its
-#   justification had gone stale, and a stale justification on a patch is how a necessary patch
-#   gets deleted by someone who checks the stated reason and finds it no longer holds.
-#   Patch 003 is the other half of the same platform fact, at Mesa's own `os_dupfd_cloexec`.
+#   Three libdrm call sites, guarded by OOPS_MESA_WINSYS: drmIoctl calls the shim instead of
+#   ioctl(2), drm_mmap calls it instead of mmap(2), and device initialisation keeps the
+#   descriptor it was given instead of duplicating it with fcntl(F_DUPFD_CLOEXEC), which this
+#   platform refuses (patch 003). dev->fd then equals dev->flink_fd, as libdrm's release path
+#   expects, so it closes once.
 #
 # Why it could not be a shim
-#   libdrm calls libc's ioctl and mmap directly by name. The only way to intercept that without
-#   editing the call sites is to define those symbols ourselves and let them win at link time,
-#   which would capture every ioctl and mmap the title makes - its own file access, its own
-#   memory - and route them into a graphics winsys. Changing two call sites is smaller, and it
-#   is confined to the library that should be talking to a kernel and has none.
-#
-# Why it is not upstreamable as-is
-#   It is a port to a platform upstream has no knowledge of. If this were ever offered upstream
-#   it would want to be a build-time backend selection rather than two ifdefs, which is a larger
-#   change than this project needs and would be worth making only if someone else wanted it.
+#   libdrm calls libc's ioctl and mmap by name. Interposing those symbols would route every
+#   ioctl and mmap the title makes, its own file access and memory included, into the winsys.
 #
 # Applies to: libdrm 2.4.133, the version Mesa pins by hash in subprojects/libdrm.wrap (D005).
 --- a/subprojects/libdrm-2.4.133/xf86drm.c	2026-09-14 18:07:14.696431900 +0100

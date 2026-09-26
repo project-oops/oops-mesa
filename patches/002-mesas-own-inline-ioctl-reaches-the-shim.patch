@@ -2,35 +2,13 @@
 #
 # What it changes
 #   One call site in Mesa proper: `drm_ioctl` in `src/util/os_drm.h` calls the shim instead of
-#   ioctl(2), guarded by OOPS_MESA_WINSYS so the patch is inert anywhere else. `drm_ioctl_write`
-#   and `drm_ioctl_write_read` both funnel through it, so this one site covers every caller.
-#
-# Why patch 001 was not enough, which took five hardware runs to see
-#   001 intercepts `drmIoctl` in libdrm. But Mesa does not always go through libdrm. Its own
-#   header says so at the top, and the sentence is the whole bug:
-#
-#     "These are identical to libdrm functions drmCommandWrite* and drmIoctl, but unlike
-#      libdrm, these are inlinable."
-#
-#   So there are two routes to the same command set. libdrm's `amdgpu_device_initialize` takes
-#   the first and reaches the shim; Mesa's `ac_drm_query_*` family takes the second and called
-#   the platform's real ioctl(2), which has no DRM device behind it. The failure was invisible
-#   from inside the shim precisely *because* the call never arrived: a numbered log of every
-#   ioctl showed twelve calls, all answered 0, and then radeonsi giving up with no thirteenth.
-#
-#   On the 2026-09-17 15:23 run the split is exact. Queries 0, 22, 21, 3 and 2 arrive through
-#   libdrm and are answered. `ac_drm_query_gpu_info` then asks for AMDGPU_INFO_DEV_INFO through
-#   the inline route, and nothing reaches the shim at all.
+#   ioctl(2), guarded by OOPS_MESA_WINSYS. `drm_ioctl_write` and `drm_ioctl_write_read` funnel
+#   through it. Mesa's `ac_drm_query_*` family uses these inline copies of libdrm's ioctl
+#   helpers, so patch 001 alone leaves AMDGPU_INFO_DEV_INFO going to the platform's ioctl(2).
 #
 # Why it could not be a shim
-#   Same reason as 001, and more sharply. These are `static inline` functions in a header: they
-#   are compiled into every caller, so there is no symbol to interpose on. Defining `ioctl`
-#   ourselves would capture every ioctl the title makes - its own file access included - and
-#   route it into a graphics winsys. One call site is smaller and says what it means.
-#
-# Why it is not upstreamable as-is
-#   As 001: a port to a platform upstream has no knowledge of, and it would want to be a
-#   build-time backend selection rather than an ifdef.
+#   These are `static inline` functions compiled into every caller, so there is no symbol to
+#   interpose on; defining `ioctl` would capture every ioctl the title makes.
 #
 # Applies to: mesa-26.2.2, the pin in dependencies.mk (D004).
 diff --git a/src/util/os_drm.h b/src/util/os_drm.h

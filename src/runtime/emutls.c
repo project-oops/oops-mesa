@@ -1,52 +1,14 @@
 /*
- * Thread-local storage for a platform that will not load a title carrying one.
+ * The emulated-TLS runtime. The platform loader rejects a title image with a `PT_TLS`
+ * program header (oops-apps `src/oops-mesa/tls-probe`), so Mesa is compiled with
+ * `-femulated-tls`: each thread-local becomes an `__emutls_v.*` control record in
+ * `.data` and each access a call to `__emutls_get_address`. compiler-rt normally
+ * supplies that function; this target does not link it, so it is defined here over
+ * `pthread_key_*` (threads.c).
  *
- * # Why this exists
- *
- * The console refuses any title image with a `PT_TLS` program header. That is measured,
- * not inferred: `oops-apps/src/oops-mesa/tls-probe` is 198 KB containing nothing but
- * two `__thread` variables, and the loader rejected it in exactly the same place as the
- * 20 MB Mesa title - `sceSblAuthMgrAuthHeader:readHeader -37`, before a single
- * instruction ran. Every other app in the collection has five program headers and no
- * TLS, and every one of them loads.
- *
- * Mesa cannot simply stop using thread-local storage: eight symbols across `src/util`,
- * `src/mesa/glapi` and ACO are defined `thread_local`, and the GL dispatch pair is
- * reached from hand-written assembly.
- *
- * # What is done instead, and why it is not a patch
- *
- * The compiler already has an answer for platforms without native TLS:
- * `-femulated-tls`. Each thread-local becomes an ordinary `__emutls_v.*` control record
- * in `.data`, and every access becomes a call to `__emutls_get_address`. No segment is
- * emitted, the linker script needs no `PT_TLS` phdr, and upstream Mesa is not modified
- * at all - which is the outcome CLAUDE.md's first principle asks for, a shim rather
- * than a patch.
- *
- * Mesa only disables it for Android (`meson.build`, `with_platform_android`), so
- * nothing in this build was relying on native TLS being kept.
- *
- * What the compiler does not supply is the runtime. `__emutls_get_address` normally
- * comes from compiler-rt's builtins, which this target does not link. It is a small
- * function over `pthread_key_*`, and `src/runtime/threads.c` already maps those onto
- * the vendor's thread API - so it belongs here, in the shim that owns what Mesa asks of
- * a C library.
- *
- * # The contract
- *
- * From the emutls ABI, as compiler-rt implements it. The compiler emits one of these
- * per thread-local object and passes its address:
- *
- *     struct __emutls_control {
- *         size_t size;      the object's size in bytes
- *         size_t align;     its alignment
- *         union { uintptr_t index; void *address; } object;
- *         void  *value;     the initial image, or NULL meaning zero
- *     };
- *
- * `object.index` starts at zero and this file assigns it on first use. Index `n` means
- * slot `n - 1` of the calling thread's array, so zero can keep meaning "not yet
- * assigned".
+ * The control record follows compiler-rt's emutls ABI. `object.index` is zero until
+ * first use; index `n` is slot `n` of the calling thread's array, whose element 0 is
+ * the length.
  */
 
 #include <stdint.h>
@@ -65,9 +27,8 @@ struct emutls_control {
     void *value;
 };
 
-/* The per-thread array of object pointers. Element 0 holds the array's length, so a
- * thread that has only ever touched one thread-local carries two words rather than a
- * fixed maximum. */
+/* The per-thread array of object pointers, element 0 holding its length, grown on
+ * demand rather than sized to a fixed maximum. */
 static pthread_key_t s_key;
 static pthread_once_t s_key_once = PTHREAD_ONCE_INIT;
 
@@ -76,11 +37,7 @@ static pthread_once_t s_key_once = PTHREAD_ONCE_INIT;
 static pthread_mutex_t s_index_lock = PTHREAD_MUTEX_INITIALIZER;
 static uintptr_t s_next_index;
 
-/*
- * Freeing a thread's objects when it exits. Without this every thread that ever touched
- * a thread-local would leak its objects for the life of the process, and Mesa starts a
- * compiler thread per core.
- */
+/* Frees a thread's objects when it exits; Mesa starts a compiler thread per core. */
 static void emutls_thread_cleanup(void *arg) {
     uintptr_t *array = (uintptr_t *)arg;
     if (array == NULL) {
@@ -124,7 +81,6 @@ static uintptr_t *emutls_array_for(uintptr_t index) {
     return grown;
 }
 
-/* Allocate one object, honouring its alignment, and give it its initial value. */
 static void *emutls_allocate(const struct emutls_control *control) {
     size_t align = control->align;
     if (align < sizeof(void *)) {
@@ -132,8 +88,8 @@ static void *emutls_allocate(const struct emutls_control *control) {
     }
 
     void *object = NULL;
-    /* `posix_memalign` is imported and wants a power-of-two multiple of sizeof(void *),
-     * which the adjustment above guarantees for every alignment a compiler emits. */
+    /* `posix_memalign` wants a power-of-two multiple of sizeof(void *), which the
+     * adjustment above guarantees for every alignment a compiler emits. */
     if (posix_memalign(&object, align, control->size != 0 ? control->size : 1u) != 0) {
         return NULL;
     }
@@ -157,11 +113,7 @@ void *__emutls_get_address(void *control_ptr) {
 
     (void)pthread_once(&s_key_once, emutls_key_init);
 
-    /*
-     * Assign this object an index the first time anybody asks for it. Read once outside
-     * the lock for the common case, then re-check inside it, because two threads can
-     * arrive together on the very first use.
-     */
+    /* Double-checked: two threads can reach an object's first use together. */
     uintptr_t index = control->object.index;
     if (index == 0) {
         (void)pthread_mutex_lock(&s_index_lock);

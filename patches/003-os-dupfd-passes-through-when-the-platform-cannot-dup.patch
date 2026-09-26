@@ -1,48 +1,16 @@
 # 003-os-dupfd-passes-through-when-the-platform-cannot-dup.patch
 #
 # What it changes
-#   One function: `os_dupfd_cloexec` in `src/util/os_file.c`. This platform refuses
-#   `F_DUPFD_CLOEXEC` but serves `F_DUPFD`, and it reports the refusal as **EOPNOTSUPP (45)**
-#   rather than EINVAL (22) - so upstream's `if (errno != EINVAL) return -1;` bails before the
-#   `F_DUPFD` fallback that would have worked. This lets EOPNOTSUPP fall through to it, keeps a
-#   duplicate whose close-on-exec flag could not be set rather than discarding it, and leaves the
-#   original "hand back the same fd" as a last resort. All of it is guarded by OOPS_MESA_WINSYS,
-#   so it is inert anywhere else.
+#   `os_dupfd_cloexec` in `src/util/os_file.c`, guarded by OOPS_MESA_WINSYS. This platform
+#   refuses `F_DUPFD_CLOEXEC` with EOPNOTSUPP (45), not EINVAL, and serves `F_DUPFD`
+#   (`src/platform/dri_loader.c` dup probe: F_DUPFD_CLOEXEC=-1 errno 45, F_DUPFD=15). The patch
+#   lets EOPNOTSUPP fall through to the `F_DUPFD` fallback, keeps a duplicate whose
+#   close-on-exec flag could not be set, and hands back the same fd as a last resort. The DRI
+#   frontend dups the device fd first (`pipe_loader_drm_probe_fd`), and a failure there
+#   returns before any ioctl.
 #
 # Why it could not be a shim
-#   `os_dupfd_cloexec` is Mesa's own util, compiled into libmesa_util and called from inside the
-#   DRI frontend; there is no seam a shim could sit on. The device fd it is asked to duplicate is
-#   oops-mesa's (a winsys singleton), but the duplication happens entirely within Mesa.
-#
-# Why it is needed - measured, not assumed
-#   The Gallium DRI frontend dups the device fd first thing (`pipe_loader_drm_probe_fd` ->
-#   `os_dupfd_cloexec`), and that call is inside
-#
-#       if (fd < 0 || (new_fd = os_dupfd_cloexec(fd)) < 0) return false;
-#
-#   which is the **only** exit from the frontend that issues no ioctl at all. A title that fails
-#   there gets "the DRI frontend would not create a screen" and nothing else - no driver name, no
-#   ioctl trace, nothing to distinguish it from a driver problem. It cost several hardware runs on
-#   2026-09-24/25 to localise.
-#
-#   Measured on hardware 2026-09-25, from `src/platform/dri_loader.c` on the frontend's own fd:
-#
-#       dup probe on fd 11: F_DUPFD_CLOEXEC=-1 errno 45, F_DUPFD=15 errno 0
-#
-#   **F_DUPFD returns a working duplicate.** Only the CLOEXEC variant is unsupported.
-#
-# What this corrects
-#   Worklog 049 recorded that `fcntl` "returns EINVAL for both F_DUPFD_CLOEXEC and F_DUPFD, even
-#   on a genuine open regular file (/app0/eboot.bin, fd 11)", across three hardware runs, and the
-#   first version of this patch was built on that. The measurement above is on the same file at
-#   the same fd number and disagrees: the errno is EOPNOTSUPP, and F_DUPFD works. So the premise
-#   "this platform simply does not implement fcntl-based duplication" was wrong, and the
-#   pass-the-fd-through behaviour was compensating for a fallback that had never been allowed to
-#   run.
-#
-#   `dup`/`dup2` remain unused: they are corpus-placed only and unmeasured on the native leg, and
-#   binding an unmeasured import is the GEN=4 trap obscene REQ-20260917T1818Z-9f41 warned against.
-#   Nothing here needs them now that F_DUPFD is known to work.
+#   `os_dupfd_cloexec` is Mesa's own util, called from inside the DRI frontend; there is no seam.
 #
 diff --git a/src/util/os_file.c b/src/util/os_file.c
 index 7d99383e..608512e8 100644

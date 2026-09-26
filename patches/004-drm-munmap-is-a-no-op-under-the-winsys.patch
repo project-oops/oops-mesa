@@ -1,15 +1,15 @@
-# 004: drm_munmap is a no-op under the winsys - the other half of patch 001's drm_mmap redirect.
+# 004-drm-munmap-is-a-no-op-under-the-winsys.patch
 #
-# Patch 001 redirected libdrm's drm_mmap to the shim but left drm_munmap calling the real munmap,
-# which frees the CPU virtual address. radeonsi maps and unmaps buffers repeatedly (its shader
-# upload uses RADEON_MAP_TEMPORARY: map, memcpy, unmap), so the unmap freed the address and the
-# platform re-handed it to the next buffer's map - two buffers collided on one CPU address, and the
-# shader's write landed in the wrong buffer's physical pages. The shader buffer the GPU executes
-# then held only its allocation-time contents and the wavefronts faulted ILLEGAL_INST
-# (oops-mesa worklog 059). A buffer's CPU mapping belongs to the bo for its lifetime and is released
-# only at GEM_CLOSE (oops_winsys_gem_close -> oops_mem_unmap), so unmapping here is a no-op. The
-# shim's own oops_winsys_munmap is already a no-op for the same reason; this closes the one libdrm
-# macro that bypassed it. It could not be a shim: drm_munmap is libdrm's own inline macro.
+# What it changes
+#   libdrm's drm_munmap is a no-op under OOPS_MESA_WINSYS, the counterpart of patch 001's
+#   drm_mmap redirect. A buffer's CPU mapping belongs to the bo for its lifetime and is released
+#   at GEM_CLOSE (oops_winsys_gem_close -> oops_mem_unmap), as oops_winsys_munmap already
+#   assumes. A real munmap frees the address for reuse, so radeonsi's map/memcpy/unmap shader
+#   upload (RADEON_MAP_TEMPORARY) lands in another buffer's pages.
+#
+# Why it could not be a shim
+#   drm_munmap is a `static inline` function in libdrm's own header; there is no symbol to
+#   interpose on.
 --- a/subprojects/libdrm-2.4.133/libdrm_macros.h
 +++ b/subprojects/libdrm-2.4.133/libdrm_macros.h
 @@ -89,7 +89,19 @@ static inline int drm_munmap(void *addr, size_t length)

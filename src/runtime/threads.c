@@ -1,34 +1,14 @@
 /*
- * The thread surface Mesa needs, mapped onto the vendor's.
+ * The `pthread_*` surface Mesa needs, mapped onto the vendor thread API. The surface
+ * and the evidence for each vendor twin are in
+ * `docs/hardware/mesa-thread-surface-fw1240.md`.
  *
- * Mesa touches `pthread_*` from exactly one file, its C11 threads layer, so this
- * surface is closed at 26 functions. Which 26, and what evidence stands behind each
- * vendor twin, is `docs/hardware/mesa-thread-surface-fw1240.md`; this file is that
- * table turned into code.
- *
- * # Why the mapping is nearly one to one
- *
- * The platform's C library is FreeBSD-derived and every one of its thread types is a
- * pointer: `pthread_t`, `pthread_mutex_t`, `pthread_cond_t` and `pthread_mutexattr_t`
- * are all pointers to opaque structures, and the vendor calls take pointer-sized
- * handles. So the handles pass through unchanged and nothing here allocates, copies or
- * wraps them. Two exceptions are handled below: `pthread_key_t` is an `int`, and
- * `pthread_once_t` is a structure rather than a pointer.
- *
- * # Two conventions that do not line up, and what is done about it
- *
- * **Arity.** Three vendor twins take a trailing name the POSIX form has no place for:
- * create, mutex init and cond init. A shim that delegated by a rule rather than per
- * name would read a register the caller never set. orbistoun hit exactly that and
- * recorded it (its D385 and D475), and oops-sdk's own declarations already carry the
- * right arity. Each name here is written out.
- *
- * **Failure.** POSIX answers zero or an errno; the vendor answers `0x8002_0000 |
- * errno`, a scheme measured across five families and seven provoked failures (orbistoun
- * D398, and obSCEne's `posixerr` section relies on it). So a failure can be translated
- * rather than guessed, which matters most for `pthread_cond_timedwait`: Mesa's C11
- * layer turns `ETIMEDOUT` into a timeout and anything else into an error, so a timeout
- * reported as a generic failure would look like a broken condition variable.
+ * The platform's thread types are pointers to opaque structures, so handles pass
+ * through unchanged; `pthread_key_t` is an `int` and `pthread_once_t` is a structure.
+ * Create, mutex init and cond init take a trailing name the POSIX form lacks, so each
+ * call is written out. The vendor reports failure as `0x8002_0000 | errno`
+ * (orbistoun#D398), which `to_errno` translates; Mesa's C11 layer needs `ETIMEDOUT`
+ * from a timed wait to tell a timeout from an error.
  */
 
 #include <errno.h>
@@ -39,29 +19,14 @@
 #include <time.h>
 
 /*
- * The vendor thread API, by published name.
- *
- * The first group is bound and working in oops-sdk today, and these declarations match
- * its `src/thread/thread.c` exactly rather than being re-derived. The second group is
- * named `present` in obSCEne's import census or in orbistoun's libkernel inventory but
- * has never been called from this collection, so its arity follows the POSIX form it
- * mirrors and is marked as the assumption it is. `REQ-20260914T1443Z-3ea7` on the
- * obSCEne bus is the measurement that would settle the whole group, including whether
- * the portable names bind directly and make this file unnecessary.
+ * The vendor thread API, by published name. The first group matches the declarations in
+ * oops-sdk `src/thread/thread.c`, which calls them on hardware.
  */
-
-/* Bound and working in oops-sdk. */
 __attribute__((weak)) int scePthreadCreate(void *thread, const void *attr,
                                            void *(*entry)(void *), void *arg,
                                            const char *name);
 __attribute__((weak)) int scePthreadJoin(void *thread, void **value);
 __attribute__((weak)) int scePthreadDetach(void *thread);
-/* The attribute trio, for the stack size `pthread_create` below has to ask for. Same
- * group and same arity as the rest: `oops-sdk/src/thread/thread.c` declares and calls
- * all three, and its titles run on hardware, so these are bound rather than assumed.
- * The build's own import manifest agrees - `build/mesa-imports.txt` attributes
- * `scePthreadAttrInit`, `scePthreadAttrSetstacksize` and `scePthreadAttrDestroy` to
- * `libkernel`. */
 __attribute__((weak)) int scePthreadAttrInit(void *attr);
 __attribute__((weak)) int scePthreadAttrSetstacksize(void *attr, size_t stacksize);
 __attribute__((weak)) int scePthreadAttrDestroy(void *attr);
@@ -82,7 +47,7 @@ __attribute__((weak)) int scePthreadCondSignal(void *cond);
 __attribute__((weak)) int scePthreadCondBroadcast(void *cond);
 __attribute__((weak)) int scePthreadCondDestroy(void *cond);
 
-/* Named present, never called from here. Arity assumed from the POSIX form. */
+/* Exported per obSCEne's import census; arity follows the POSIX form they mirror. */
 __attribute__((weak)) void scePthreadExit(void *value);
 __attribute__((weak)) int scePthreadKeyCreate(int *key, void (*destructor)(void *));
 __attribute__((weak)) int scePthreadKeyDelete(int key);
@@ -93,21 +58,14 @@ __attribute__((weak)) int scePthreadMutexattrInit(void *attr);
 __attribute__((weak)) int scePthreadMutexattrDestroy(void *attr);
 __attribute__((weak)) int scePthreadMutexattrSettype(void *attr, int type);
 
-/* Every object this shim creates carries a name, because the vendor calls take one and
- * the platform's own tools show it. One name for all of them would make a thread list
- * useless, so each kind gets its own. */
+/* The names the vendor calls take, shown by the platform's tools; one per kind. */
 static const char k_thread_name[] = "oops-mesa";
 static const char k_mutex_name[] = "oops-mesa-mtx";
 static const char k_cond_name[] = "oops-mesa-cnd";
 
 /*
- * Translate a vendor return into an errno.
- *
- * Zero means success in both conventions, which is the only part that coincides. A
- * vendor failure carries the errno in its low bits under 0x8002_0000. Anything that
- * does not match that shape is reported as EINVAL rather than as a number invented
- * here: a caller switching on specific errno values then falls to its default branch
- * instead of matching the wrong case.
+ * Translates a vendor return into an errno. A value outside the `0x8002_0000 | errno`
+ * shape becomes EINVAL, so a caller switching on errno takes its default branch.
  */
 static int to_errno(int rc) {
     if (rc == 0) {
@@ -119,76 +77,37 @@ static int to_errno(int rc) {
     return EINVAL;
 }
 
-/* Nothing here can work if the platform did not bind the call. Reporting ENOSYS is
- * honest and makes the first use fail with a reason rather than dereferencing a null.
- */
+/* An unbound vendor call fails with ENOSYS rather than a null call. */
 #define NEED(fn)                                                                       \
     do {                                                                               \
         if (!(fn))                                                                     \
             return ENOSYS;                                                             \
     } while (0)
 
-/* --- threads -------------------------------------------------------------------------
- */
-
 /*
- * The stack Mesa's threads need, which is not the one this platform gives them.
- *
- * Mesa's C11 threads layer calls `pthread_create(thr, NULL, ...)` - a **null
- * attribute**, every time, from `mesa/src/c11/impl/threads_posix.c:255`. On a Linux
- * host that means glibc's default of 8 MB. Here it meant the vendor's default, and the
- * vendor's default is small enough that Mesa's shader compiler runs off the end of it.
- *
- * That is measured, not reasoned: on 2026-09-20 `DRIP00001` compiled and linked a GLSL
- * 330 program and took a SIGSEGV on thread `dri-probe:gl0`, fault address `0x7eed80fa8`
- * against `rsp 0x7eed80fb0` - the fault is exactly `rsp - 8`, which is a `call` pushing
- * its return address onto a page that is not there. Not a bad pointer: a stack that
- * ended. The backtrace, resolved against the link map, is `impl_thrd_routine` ->
- * `util_queue_thread_func` -> `glthread_unmarshal_batch` ->
- * `_mesa_unmarshal_LinkProgram` -> `st_link_shader` -> `gl_nir_link_glsl` ->
- * `gl_nir_link_varyings` -> `nir_opt_varyings_bulk` -> `nir_opt_varyings`, which
- * faulted 0x49 bytes in. Ten frames had consumed about 72 KB (`rbp - rsp` = 0x119b0),
- * and the pass that died allocates its own large structure on the heap
- * (`MALLOC_STRUCT(linkage_info)`)
- * - so this is ordinary compiler frame depth against a stack far too small for it, not
- * one runaway frame. See the worklog entry and `docs/hardware/` for the full capture.
- *
- * 8 MB is chosen because it is what upstream Mesa is written and tested against, not
- * because 72 KB needed rounding up. Sizing this to the failure that was seen would
- * leave the next, larger shader to find the new edge on the console; matching the host
- * removes the whole class. The cost is address space rather than memory - these are
- * demand-paged reservations, and only the pages a thread touches are ever committed.
- *
- * This belongs here and not in a Mesa patch (principle 1): Mesa asking for a default
- * stack is correct, and what a default stack *is* on this platform is precisely what
- * the runtime shim exists to answer.
+ * The stack for a thread created without an attribute, which is every Mesa thread
+ * (`mesa/src/c11/impl/threads_posix.c:255`). The vendor default is too small for the
+ * GLSL linker's frame depth; 8 MB matches the glibc default upstream Mesa is tested
+ * against. The reservation is demand-paged, so the cost is address space.
  */
 #define MESA_THREAD_STACK_BYTES ((size_t)8u * 1024u * 1024u)
 
-/* One line if the bigger stack could not be asked for, said once. Falling back to the
- * vendor default is not a failure this function can refuse - a thread that is not
- * created is worse than a thread that might overflow - but it is the cause of a crash
- * that would otherwise look unexplained, so it does not pass in silence (principle 4).
- */
+/* Reports, once, a thread created on the vendor default stack. */
 extern void oops_winsys_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                    void *(*start)(void *), void *arg) {
     NEED(scePthreadCreate);
 
-    /* A caller that brought its own attribute keeps it. Mesa never does today; if some
-     * future caller does, its choice is deliberate and outranks the default set below.
-     */
+    /* A caller's own attribute outranks the default stack below. */
     if (attr != NULL) {
         return to_errno(scePthreadCreate(thread, attr, start, arg, k_thread_name));
     }
 
     /*
-     * The attribute is a pointer to an opaque structure the vendor allocates, so what
-     * is held here is room for that pointer and the address of *that* is what the calls
-     * take. The buffer is oversized on purpose and zeroed first, which is exactly what
-     * oops-sdk's `oops_thread_create` does with the same three calls - this mirrors a
-     * working caller rather than inventing a second convention.
+     * The vendor attribute is a pointer to an opaque structure it allocates; the calls
+     * take the address of that pointer. Oversized and zeroed, as oops-sdk's
+     * `oops_thread_create` does.
      */
     char attr_buf[128];
     void *attr_ptr = NULL;
@@ -221,8 +140,7 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr,
 
     int rc = scePthreadCreate(thread, attr_ptr, start, arg, k_thread_name);
 
-    /* Destroyed either way: the attribute is the vendor's allocation and the thread has
-     * its own copy of what it needed by the time create returns. */
+    /* The thread holds its own copy of the attribute once create returns. */
     if (attr_ptr != NULL && scePthreadAttrDestroy != NULL) {
         scePthreadAttrDestroy(attr_ptr);
     }
@@ -245,10 +163,8 @@ pthread_t pthread_self(void) {
 }
 
 int pthread_equal(pthread_t a, pthread_t b) {
-    /* This one answers a question rather than reporting a status, so it does not go
-     * through to_errno: a non-zero result means equal. Falling back to a pointer
-     * comparison when the vendor call is absent is safe, because the handles are
-     * pointers. */
+    /* Not a status, so no to_errno. The handles are pointers, so comparing them is a
+     * valid fallback. */
     return scePthreadEqual ? scePthreadEqual(a, b) : (a == b);
 }
 
@@ -256,15 +172,10 @@ void pthread_exit(void *value) {
     if (scePthreadExit) {
         scePthreadExit(value);
     }
-    /* The vendor call does not return. If it was not bound there is nothing sensible
-     * left to do and returning would resume a thread that asked to stop, so this spins
-     * deliberately rather than pretending the exit happened. */
+    /* pthread_exit must not return, so an unbound vendor call spins. */
     for (;;) {
     }
 }
-
-/* --- mutexes -------------------------------------------------------------------------
- */
 
 int pthread_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr) {
     NEED(scePthreadMutexInit);
@@ -306,9 +217,6 @@ int pthread_mutexattr_settype(pthread_mutexattr_t *attr, int type) {
     return to_errno(scePthreadMutexattrSettype(attr, type));
 }
 
-/* --- condition variables -------------------------------------------------------------
- */
-
 int pthread_cond_init(pthread_cond_t *cond, const pthread_condattr_t *attr) {
     NEED(scePthreadCondInit);
     return to_errno(scePthreadCondInit(cond, attr, k_cond_name));
@@ -335,12 +243,8 @@ int pthread_cond_broadcast(pthread_cond_t *cond) {
 }
 
 /*
- * The one call whose failure value is load-bearing.
- *
  * POSIX takes an absolute deadline; the vendor call takes a relative timeout in
- * microseconds. So the deadline is converted against the clock, and a deadline already
- * past becomes a zero wait rather than a negative one, which would otherwise become an
- * enormous unsigned timeout.
+ * microseconds. A past deadline becomes a zero wait, not a huge unsigned one.
  */
 int pthread_cond_timedwait(pthread_cond_t *cond, pthread_mutex_t *mutex,
                            const struct timespec *deadline) {
@@ -391,9 +295,6 @@ int pthread_mutex_timedlock(pthread_mutex_t *mutex, const struct timespec *deadl
     return to_errno(scePthreadMutexTimedlock(mutex, (unsigned int)usec));
 }
 
-/* --- thread-local storage ------------------------------------------------------------
- */
-
 int pthread_key_create(pthread_key_t *key, void (*destructor)(void *)) {
     NEED(scePthreadKeyCreate);
     return to_errno(scePthreadKeyCreate(key, destructor));
@@ -413,17 +314,9 @@ int pthread_setspecific(pthread_key_t key, const void *value) {
     return to_errno(scePthreadSetspecific(key, value));
 }
 
-/* --- once ----------------------------------------------------------------------------
- */
-
 /*
- * `pthread_once_t` is a structure here rather than a pointer, so unlike everything else
- * in this file it cannot be handed to the vendor call: the two layouts are not the same
- * object and passing one as the other would corrupt whatever sits after it.
- *
- * So this is the one thing implemented rather than delegated, over a single mutex. That
- * is heavier than the platform's own version and it is correct, which is the right
- * trade for a call that runs once per site for the life of the process.
+ * `pthread_once_t` is a structure whose layout differs from the vendor's, so this is
+ * implemented over one mutex rather than delegated.
  */
 static pthread_mutex_t s_once_lock;
 static bool s_once_lock_ready;
@@ -434,10 +327,7 @@ int pthread_once(pthread_once_t *once, void (*routine)(void)) {
     }
 
     if (!s_once_lock_ready) {
-        /* A race here would be a thread calling pthread_once before any other thread
-         * exists, which is when Mesa does its first initialisation. If that assumption
-         * ever stops holding, this needs the platform's own atomic initialisation and a
-         * request to go with it. */
+        /* Unsynchronised: the first pthread_once runs before Mesa starts any thread. */
         int rc = pthread_mutex_init(&s_once_lock, NULL);
         if (rc != 0) {
             return rc;
@@ -456,9 +346,6 @@ int pthread_once(pthread_once_t *once, void (*routine)(void)) {
     return 0;
 }
 
-/* --- scheduling ----------------------------------------------------------------------
- */
-
 int sched_yield(void) {
     extern void scePthreadYield(void) __attribute__((weak));
     if (scePthreadYield) {
@@ -467,27 +354,12 @@ int sched_yield(void) {
     return 0;
 }
 
-/* --- the families beyond Mesa's C11 layer --------------------------------------------
- * *
- *
- * `docs/hardware/mesa-thread-surface-fw1240.md` is the surface Mesa's C11 threads layer
- * needs, and it is closed at 26. These are the rest: read-write locks, barriers,
- * condition-variable attributes and two odds, referenced from Mesa outside that layer
- * and reported missing by `tools/what-is-still-needed.sh` once every archive was built.
- *
- * Evidence is thinner here and it is worth being exact about which. obSCEne's census
- * records `scePthreadRwlockRdlock`, `scePthreadRwlockWrlock`, the `scePthreadCondattr*`
- * family and `scePthreadGetcpuclockid` as present. It does not record the rwlock init,
- * destroy and unlock calls, nor any of the barrier family - while it does record
- * `scePthreadRwlockattr*` and `scePthreadBarrierattr*`, which is the same shape of hole
- * the census showed for `clock_gettime`: the attribute functions are there and the
- * operations they configure are not, which is a gap in the mine rather than a platform
- * without barriers.
- *
- * So every twin below is declared weakly, as the ones above are. One that the platform
- * does not export resolves to nothing and its wrapper returns ENOSYS at the first call,
- * with a name attached, rather than the whole shim failing to link over a function Mesa
- * may never reach. `REQ-20260914T1743Z-2e08` asks for the whole group by name.
+/*
+ * Read-write locks, barriers, condition-variable attributes and CPU clocks, which Mesa
+ * references outside its C11 threads layer. obSCEne's census records the rwlock lock
+ * calls, the condattr family and getcpuclockid, but not the rwlock init, destroy and
+ * unlock calls or the barrier family. Weak like the rest, so an unexported one fails
+ * with ENOSYS at its first call.
  */
 
 __attribute__((weak)) int scePthreadRwlockInit(void *lock, const void *attr,

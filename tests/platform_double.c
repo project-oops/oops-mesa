@@ -1,17 +1,9 @@
 /*
- * A stand-in for the platform's memory calls, so the winsys can be exercised on the
- * build machine.
+ * Host stand-ins for the platform's memory calls, so the winsys suite has live buffers.
  *
- * oops-sdk binds these as weak symbols, so off the console they resolve to nothing and
- * every allocation refuses. That is the right behaviour for the SDK and it makes most
- * of the winsys untestable here: a buffer can never exist, so nothing that takes a live
- * buffer is ever reached.
- *
- * Defining them here gives the suite real buffers backed by ordinary host memory. What
- * is being tested is still the winsys's own logic - the handle table, the liveness
- * rule, what each command reports - and not these. They do the least they can while
- * remaining honest: allocation really allocates, mapping really returns the right
- * pages, and a release really invalidates. Nothing here pretends to be a GPU.
+ * oops-sdk binds these as weak symbols, which off the console resolve to nothing and
+ * refuse every allocation. Here allocation is host memory, mapping returns the right
+ * pages and a release invalidates; the tests assert on the winsys's own bookkeeping.
  */
 #include <stdint.h>
 #include <stdlib.h>
@@ -27,10 +19,8 @@ struct obs_batch_map_entry {
     uint8_t flags;
 };
 
-/* Physical offsets are handed out as indices into this table, so that a mapping can
- * find the host allocation behind the offset the winsys is carrying. Offset zero is
- * deliberately a legitimate value here, because it is one on the console and the buffer
- * table got that wrong once already (oops-mesa worklog 007). */
+/* Physical offsets are indices into this table, so a mapping finds the host allocation
+ * behind an offset. Offset zero is a legitimate value, as it is on the console. */
 #define MAX_ALLOCS 64
 static struct {
     void *base;
@@ -84,9 +74,8 @@ int sceKernelMapDirectMemory(void **addr, size_t len, int prot, int flags,
 
 int sceKernelBatchMap(struct obs_batch_map_entry *entries, int num_entries,
                       int *completed) {
-    /* Mapping at a chosen address is the one thing a host cannot honestly imitate, so
-     * this reports the pages as mapped without moving anything. Every test that uses it
-     * asserts on the winsys's bookkeeping rather than on memory contents. */
+    /* A host cannot map at a chosen address, so this reports success without mapping;
+     * callers assert on bookkeeping, not memory contents. */
     (void)entries;
     *completed = num_entries;
     return 0;

@@ -1,25 +1,14 @@
 #!/usr/bin/env bash
-# Emit the C source of a probe archive: one empty definition per symbol obSCEne measured present
-# on this platform.
+# Emit the C source of a probe archive: one empty definition per symbol obSCEne's import census
+# records present on this platform.
 #
-# # What this is for
+# meson answers "does this function exist" by linking a program that takes its address. With
+# this archive a probe answers whether a measurement on this console found the symbol; an
+# unmeasured one reports absent and Mesa takes its portable path (cross-prospero.ini).
 #
-# meson answers "does this function exist" by linking a program that takes its address, so the
-# answer depends entirely on what the linker is given. Two wrong ways to give it something were
-# tried first and both are recorded in cross-prospero.ini: allowing undefined symbols makes every
-# probe say yes, including for GCC builtins clang does not have; giving it nothing makes every
-# probe say no, including for functions the platform certainly provides.
-#
-# This is the third way and the only one with evidence behind it. The archive contains exactly
-# the names obSCEne's import census recorded as `present` on firmware 12.40, so a probe answers:
-# **did a measurement on this console find this symbol?** A yes is backed by a sweep; a no means
-# nothing measured it, and Mesa then takes its own portable path, which is the safe direction.
-#
-# The definitions are empty and are never called. Nothing links them into a running binary: the
-# build produces static archives, and a title resolves these names from the platform's own
-# exports at load, as oops-sdk's payloads already do.
-#
-# This script only writes C. The compile happens in the container, from build-mesa.sh.
+# The definitions are never called or linked into a running binary: a title resolves these
+# names from the platform's exports at load. This script only writes C; build-mesa.sh compiles
+# it in the container.
 set -eu
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -38,22 +27,12 @@ fi
 
 sweep=$(sed -n 's/^OBS|sweep|\([^|]*\).*/\1/p' "$CENSUS" | head -1)
 
-# # The supplement, and why it is separate
+# Names measured present by other means but absent from the census, each with its evidence.
+# The census is a mine of symbol tables, so a missing name means nobody looked there.
 #
-# The census is a mine of symbol tables, so a name missing from it means nobody looked, not that
-# the platform lacks it. Where the build needs a name the mine skipped and the evidence around it
-# is strong, it goes here with that evidence written down, and a request goes on the obSCEne bus
-# to replace the argument with a measurement. Nothing enters this list because it would be
-# convenient; each line has to say what makes it more than a guess.
-#
-#   clock_gettime   now measured present, not merely argued for. obSCEne's payload-leg sweep
-#                   20260915-203058 (017-posix/clock-symbols) resolves `clock_gettime` in both
-#                   `libkernel` and `libSceLibcInternal` (as it does `clock_getres`, `nanosleep`,
-#                   `sched_yield`, `gettimeofday`). It is missing from the census only because the
-#                   eboot-leg census resolver is blind - `sceKernelGetModuleList` exposes two
-#                   module handles on a native title - not because the platform lacks it
-#                   (REQ-20260914T1636Z-4c92 answered; resolver artifact, REQ-...-66c3). This line
-#                   stays until obSCEne folds the name into ps5-imports.txt; then it can go.
+#   clock_gettime   resolved in `libkernel` and `libSceLibcInternal` by obSCEne's payload-leg
+#                   probe 017-posix/clock-symbols; the eboot-leg census resolver sees only two
+#                   module handles on a native title and misses it.
 SUPPLEMENT="clock_gettime"
 
 {
@@ -65,8 +44,7 @@ SUPPLEMENT="clock_gettime"
     printf ' * linked into anything that runs. Source: obscene/data/hardware/ps5-imports.txt\n'
     printf ' * (sweep %%s). */\n'
     printf '\n'
-    # The linker wants an entry point for a -nostdlib executable; probe programs have a main
-    # that is never run.
+    # A -nostdlib executable needs an entry point; probe programs are never run.
     printf 'void _start(void);\nvoid _start(void) { }\n\n'
     { grep -oE "^OBS\|sym\|[A-Za-z][A-Za-z_0-9]*\|[A-Za-z_][A-Za-z_0-9]*\|present" "$CENSUS" \
           | awk -F'|' '{print $4}'

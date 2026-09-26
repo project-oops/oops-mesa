@@ -2,11 +2,9 @@
 # Build tools/tiling-compare against the pinned Mesa's AddressLib and oops-sdk's tiler, run it,
 # and write tiling_gfx1013.txt next to this script.
 #
-# The tracked output is the point. It records whether a radeonsi 64KB_R_X surface lands in the
-# same bytes as the layout the display scans out, across four blocks rather than one - which is
-# the extrapolation worklog 030 caught. `make check` regenerates into build/ and compares, so a
-# pin bump or a tiler edit that changes the answer is visible in the diff rather than discovered
-# during bring-up.
+# The tracked output records whether a radeonsi 64KB_R_X surface lands in the same bytes as the
+# layout the display scans out, across four blocks rather than one. `make check` regenerates it
+# into build/ and compares, so a pin bump or tiler edit that changes the answer shows in the diff.
 #
 # Needs clang++ on PATH; the collection's WSL builder has it. No meson, no Mesa build, no LLVM.
 set -eu
@@ -16,8 +14,7 @@ MESA=$ROOT/mesa
 ADDR=$MESA/src/amd/addrlib
 OUT=${OUT:-$ROOT/build/tiling-compare}
 
-# oops-sdk is a sibling checkout, named by a variable rather than assumed - the same shape the
-# host suite and the FreeBSD checkout use (D004).
+# oops-sdk is a sibling checkout, overridable like the FreeBSD checkout.
 OOPS_SDK=${OOPS_SDK:-$ROOT/../oops-sdk}
 
 mkdir -p "$OUT"
@@ -68,8 +65,7 @@ INCS="
 -I$OOPS_SDK/include
 "
 
-# -DADDR_FASTCALL= and the endian/SIMD/DEBUG defines are what meson.build sets. DEBUG=0 matches
-# a release build, which is what the target build produces and therefore what a title runs.
+# The defines meson.build sets; DEBUG=0 matches the release build a title runs.
 DEFS="-DADDR_FASTCALL= -DLITTLEENDIAN_CPU -DADDR_ALLOW_SIMD=1 -DDEBUG=0"
 WARN="-Wno-unused-variable -Wno-unused-local-typedefs -Wno-unused-but-set-variable
       -Wno-self-assign -Wno-uninitialized -Wno-unused-private-field -Wno-missing-braces"

@@ -1,32 +1,13 @@
 /*
- * The runtime shim's host suite. Today that is one file:
- * `src/runtime/stderr_to_klog.c`.
- *
- * # Why this is a separate binary from the winsys suite
- *
- * The thing under test *defines* `fprintf`, `fwrite`, `fputs`, `fputc`, `puts`,
- * `fflush` and `perror`. Linking it into the winsys suite would redirect that suite's
- * own reporting into the log sink and it would appear to pass silently. So it gets its
- * own binary, and this file takes care not to report through anything it has replaced.
- *
- * # Why it reports with write(2) rather than printf
- *
- * Because that care has to be real rather than a convention. clang rewrites
- * `printf("literal\n")` into `puts`, which this file's subject defines - so a reporter
- * written with `printf` would be swallowed by the code it is testing, intermittently,
- * depending on whether a particular call had a format specifier in it. `write` is not
- * intercepted and cannot be rewritten into something that is.
- *
- * That is not a hypothetical: the first version of `stderr_to_klog.c` intercepted two
- * functions because 281 source-level `fprintf` calls were counted, and the archives
- * call seven different things because of exactly this rewriting (worklog 036).
+ * Host suite for `src/runtime/stderr_to_klog.c`. The subject defines the stdio writers
+ * and `write`, so it is its own binary, apart from the winsys suite whose reporting it
+ * would capture.
  */
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
-/* The log sink `stderr_to_klog.c` writes to. Replaced here so the suite can see what
- * came out. */
+/* The log sink, recorded so the suite can see what came out. */
 static int g_lines;
 static char g_seen[512][256];
 
@@ -51,7 +32,8 @@ void oops_klog(const char *tag, const char *msg) {
 static int failures;
 static int checks;
 
-/* Reporting that cannot be intercepted. */
+/* Reports through `write`. The subject defines `write` too, so this text reaches the
+ * recording sink rather than the terminal; the exit status carries the result. */
 static void say(const char *text) {
     ssize_t ignored = write(1, text, strlen(text));
     (void)ignored;
@@ -82,8 +64,7 @@ int main(void) {
     check(strcmp(g_seen[0], "amdgpu: ac_drm_query_info(dev_info) failed.") == 0,
           "and the trailing newline is consumed rather than logged");
 
-    /* The case that forced line buffering: a message assembled one character at a time.
-     */
+    /* A message assembled one character at a time is one line. */
     reset();
     const char *msg = "assembled one character at a time\n";
     for (const char *p = msg; *p; p++) {
@@ -99,7 +80,7 @@ int main(void) {
     fwrite(lit, 1, strlen(lit), stderr);
     check(g_lines == 1, "an fwrite line is one klog write");
 
-    /* stdout is equally dead on this platform, so puts is captured too. */
+    /* stdout is captured as well as stderr. */
     reset();
     puts("a line on stdout");
     check(g_lines == 1,
@@ -114,8 +95,7 @@ int main(void) {
     check(g_lines == 3, "three newlines in one write are three klog lines");
     check(strcmp(g_seen[1], "second") == 0, "in order");
 
-    /* Longer than a klog line: split, never truncated. The tail of a diagnostic is
-     * usually the half worth having. */
+    /* A line longer than a klog line is split, never truncated. */
     reset();
     char big[400];
     for (size_t i = 0; i < sizeof(big) - 1; i++) {
@@ -139,7 +119,7 @@ int main(void) {
     check(g_lines == 1, "and fflush releases it");
     check(strcmp(g_seen[0], "no newline yet") == 0, "intact");
 
-    /* A bare newline is a blank line, which is not worth a klog write. */
+    /* A bare newline produces no klog write. */
     reset();
     fputc('\n', stderr);
     check(g_lines == 0, "a bare newline produces no klog line");
