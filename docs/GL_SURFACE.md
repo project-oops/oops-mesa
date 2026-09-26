@@ -14,6 +14,12 @@ holds ([the CTS record](hardware/the-khronos-cts-runs-fw1240.md)).
 clamp: radeonsi derives the version from caps. What the project claims is what has been
 measured (D014).
 
+**A 4.6 context is created on hardware**: `KHR-GL46.info.vendor` makes one, queries the driver
+and presents a frame ([the CTS record](hardware/the-khronos-cts-runs-fw1240.md)). What bounds
+the reachable 4.6 surface is the entry-point table, not the driver - `libglapi_bridge.a` defines
+454 of the 856 names the CTS loader asks for, and the gap includes core 4.x functions such as
+`glPatchParameterfv`. A name it does not define resolves to a stub that refuses by name.
+
 ## Headers
 
 A `USE_MESA` title compiles with oops-sdk's include directory ahead of Mesa's

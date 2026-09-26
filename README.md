@@ -15,9 +15,11 @@ differs between a Linux host and the hardware (D001):
 | `tools/` | `preamble-dump` and `tiling-compare` (host tools whose outputs are tracked data), `generate-imports.sh`, `what-is-still-needed.sh`, `format.sh` |
 | `docs/` | [GL surface](docs/GL_SURFACE.md), [decisions](docs/DECISIONS.md), [roadmap](docs/ROADMAP.md), [worklog](docs/WORKLOG.md), hardware records |
 
-radeonsi reports `GL_VERSION` 4.6 on this part; the project claims what the Khronos CTS and
-the hardware tests measure (D014), and [GL_SURFACE](docs/GL_SURFACE.md) maps the advertised
-surface onto the shims.
+radeonsi reports `GL_VERSION` 4.6 on this part, and a 4.6 context is created and drawn on
+hardware ([the CTS record](docs/hardware/the-khronos-cts-runs-fw1240.md)). The reachable surface
+is bounded by the entry points the Mesa build exports rather than by the driver: 454 of the 856
+the CTS loader asks for. The project claims what the Khronos CTS and the hardware tests measure
+(D014), and [GL_SURFACE](docs/GL_SURFACE.md) maps the advertised surface onto the shims.
 
 ## Build
 

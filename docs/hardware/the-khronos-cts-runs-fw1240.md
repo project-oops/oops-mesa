@@ -31,17 +31,40 @@ is a flush and a flip` and one present per case: 32 ms for the first, then 7.3 m
 (`flush=7321 read=0 mirror=0 disp=12`). The `info` cases query and check the driver's
 self-description; they exercise no shader, texture or blend.
 
+## A 4.6 context
+
+`KHR-GL46.info.vendor` creates an OpenGL 4.6 context, queries the driver and presents a frame:
+
+    Test case 'KHR-GL46.info.vendor'..
+      ... direct scanout: 2 buffers ... present us: flush=20704 disp=11608 ...
+    glPatchParameterfv
+      Pass (Pass)
+    Test run was ABORTED!
+
+The context is not the limit. **The entry-point table is**: `glPatchParameterfv` is GL 4.0
+tessellation and is one of the 402 names `libglapi_bridge.a` does not define, so the loader
+resolves it to the stub that names itself and throws `NotSupportedError`. 454 of the 856 names
+upstream asks for are real.
+
+dEQP aborts the session on that throw rather than recording the case as NotSupported, because it
+comes from a GL entry point during context setup rather than from a test body - so one case of
+six runs and the process exits 1.
+
+The reachable 4.6 surface is therefore bounded by what the Mesa build exports, not by what
+radeonsi supports.
+
 ## Result file
 
-The table comes from the kernel log. dEQP writes its result log with `fopen`/`fprintf`/`fclose`;
-`/data/GCTS00001/TestResults.qpa` is created and stays 0 bytes. Three arms in the same process at
-the same path:
+The table comes from the kernel log. dEQP writes its result log with `fopen`/`fprintf`/`fclose`
+and `TestResults.qpa` is created and stays 0 bytes, under `/app0` as under `/data`: the path is
+not the variable. Three arms in the same process at the same path:
 
     stdio     fwrite 24/24 errno 0, fflush 0 errno 0, fclose 0 errno 0   -> read back 0 bytes
     raw       write  24/24 errno 0, fsync  0 errno 0, close  0 errno 0   -> read back 0 bytes
     oops_fs   oops_fs_write_all 0, oops_fs_read_all 0                    -> read back 24/24
 
-`oops_fs_open` uses `SYS_open` directly; the write call is identical in all three arms.
+`oops_fs_open` uses `SYS_open` directly; the write call is identical in all three arms, so the
+descriptor from libc `open()` is what discards the writes (`oops-sdk REQ-20260925T1936Z-6c8d`).
 
 ## Platform requirements
 
@@ -52,3 +75,7 @@ the same path:
   it. Without that, `pipe_loader_drm_probe_fd` returns false before any ioctl.
 - dEQP's thread-local GL dispatch is compiled `-ftls-model=initial-exec`; general-dynamic calls
   `__tls_get_addr` and faults in libkernel.
+- The loader table resolves every name upstream asks for. One a build does not define resolves to
+  a stub that names itself and throws `NotSupportedError`; a null there is a call to address zero.
+- The result log goes to `/app0`, which is writable. Reaching `/data` needs the sandbox escape,
+  and that unmounts `/app0` with the test resources and the device descriptor under it.

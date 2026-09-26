@@ -137,3 +137,7 @@ One entry per milestone. Between milestones, commit messages are the record.
 - A descriptor from libc's `open()` on `/data` accepts writes, reports success and stores
   nothing; `oops_fs` writes through `SYS_open` and persists.
 - The CTS's GL dispatch is thread-local and is compiled initial-exec, like Mesa's.
+- A 4.6 context is created and drawn. The reachable surface is bounded by the entry points the
+  Mesa build exports, 454 of 856, not by the driver.
+- A GL name the build does not define resolves to a stub that refuses by name; a null there is a
+  call to address zero.
