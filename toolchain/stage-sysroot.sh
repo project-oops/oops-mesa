@@ -12,6 +12,7 @@
 #   include/*.h and its subdirectories   ->  usr/include/
 #   LHDRS, nine headers from sys/sys     ->  usr/include/            (errno.h, fcntl.h, ...)
 #   LDIRS, directories under sys/        ->  usr/include/<dir>/      (sys/, net/, netinet/, ...)
+#                                            - a subset of upstream's: the ones a port reaches
 #   sys/amd64/include                    ->  usr/include/machine/
 #   sys/x86/include                      ->  usr/include/x86/
 #   lib/msun/src/math.h                  ->  usr/include/math.h      (it ships with libm)
@@ -43,10 +44,12 @@ if [ "$actual" != "$PIN" ]; then
     exit 1
 fi
 
-# Verbatim from include/Makefile at the pin. Repeated rather than parsed, because a failed parse
-# looks like an empty list; the check below catches drift.
+# From include/Makefile at the pin. Repeated rather than parsed, because a failed parse looks
+# like an empty list; the checks below catch drift. LHDRS is verbatim. LDIRS is the part of
+# upstream's list a port reaches: `netinet6` because `netinet/in.h` includes `netinet6/in6.h`
+# unconditionally, so every socket program needs it (SuperTuxKart's cURL did).
 LHDRS="aio.h errno.h fcntl.h linker_set.h poll.h stdatomic.h stdint.h syslog.h ucontext.h"
-LDIRS="net netinet sys vm"
+LDIRS="net netinet netinet6 sys vm"
 
 makefile_lhdrs=$(git -C "$SRC" show "$PIN:include/Makefile" \
     | sed -n '/^LHDRS=/,/^$/p' | sed 's/^LHDRS=//' | tr -d '\\\n\t' | tr -s ' ')
@@ -54,6 +57,14 @@ for h in $LHDRS; do
     case " $makefile_lhdrs " in
         *" $h "*) ;;
         *) echo "oops-mesa: include/Makefile no longer links $h; re-read its LHDRS" >&2; exit 1 ;;
+    esac
+done
+makefile_ldirs=$(git -C "$SRC" show "$PIN:include/Makefile" \
+    | sed -n '/^LDIRS=/,/^$/p' | sed 's/^LDIRS=//' | tr -d '\\\n\t' | tr -s ' ')
+for d in $LDIRS; do
+    case " $makefile_ldirs " in
+        *" $d "*) ;;
+        *) echo "oops-mesa: include/Makefile no longer installs $d; re-read its LDIRS" >&2; exit 1 ;;
     esac
 done
 
