@@ -572,8 +572,68 @@ static void test_a_duplicated_device_fd_is_served(void) {
           "once closed, that number is refused as a descriptor that was never opened");
 }
 
+extern int g_platform_munmaps; /* platform_double.c */
+
+/* Creates a buffer of `bytes` and maps it at `va`; returns its handle, or 0. */
+static uint32_t mapped_buffer(uint64_t va, uint64_t bytes) {
+    union drm_amdgpu_gem_create c;
+    struct drm_amdgpu_gem_va m;
+
+    memset(&c, 0, sizeof(c));
+    c.in.bo_size = bytes;
+    c.in.alignment = 0x4000;
+    c.in.domains = AMDGPU_GEM_DOMAIN_VRAM;
+    if (oops_winsys_gem_create(&c) != 0) {
+        return 0;
+    }
+    memset(&m, 0, sizeof(m));
+    m.handle = c.out.handle;
+    m.operation = AMDGPU_VA_OP_MAP;
+    m.va_address = va;
+    m.map_size = bytes;
+    m.flags = AMDGPU_VM_PAGE_READABLE;
+    return oops_winsys_gem_va(&m) == 0 ? c.out.handle : 0;
+}
+
+static void test_an_address_keeps_the_pages_it_maps(void) {
+    /* The GPU hung when a freed address was mapped again over different pages, so a
+     * freed range stays mapped and the next buffer of its size there takes it over. */
+    const uint64_t va = 0x0000000300000000ull;
+    const uint64_t before = oops_winsys_retained_bytes();
+    struct drm_amdgpu_gem_va u;
+    uint32_t a = mapped_buffer(va, 0x10000);
+
+    check(a != 0, "a buffer maps");
+    memset(&u, 0, sizeof(u));
+    u.handle = a;
+    u.operation = AMDGPU_VA_OP_UNMAP;
+    u.va_address = va;
+    check(oops_winsys_gem_va(&u) == 0, "and unmaps");
+    check(oops_winsys_retained_bytes() == before + 0x10000,
+          "its range stays mapped, retained");
+    check(oops_winsys_gem_close(a) == 0, "closing it succeeds");
+    check(oops_winsys_retained_bytes() == before + 0x10000,
+          "and its pages stay with the retained range");
+
+    const int unmaps = g_platform_munmaps;
+    uint32_t b = mapped_buffer(va, 0x10000);
+    check(b != 0 && oops_winsys_retained_bytes() == before,
+          "a same-size buffer at that address takes the range over");
+    check(g_platform_munmaps == unmaps, "without the address ever being unmapped");
+
+    check(oops_winsys_gem_close(b) == 0 &&
+              oops_winsys_retained_bytes() == before + 0x10000,
+          "a close without an unmap retains the range too");
+    uint32_t c = mapped_buffer(va, 0x20000);
+    check(c != 0 && oops_winsys_retained_bytes() == before,
+          "a different-size buffer there releases it and maps afresh");
+    check(g_platform_munmaps == unmaps + 1, "which is the one unmap");
+    oops_winsys_gem_close(c);
+}
+
 int main(void) {
     printf("oops-mesa winsys host suite\n");
+    test_an_address_keeps_the_pages_it_maps();
     test_version_identifies_as_amdgpu();
     test_a_buffer_through_its_whole_life();
     test_contexts_track_what_they_can();

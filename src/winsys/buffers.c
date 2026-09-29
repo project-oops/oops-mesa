@@ -51,10 +51,11 @@ struct oops_winsys_bo {
     uint64_t size;      /* rounded up to a page */
     uint64_t alignment; /* as asked for, so GEM_OP can report the creation back */
     uint64_t domain_flags;
-    int64_t phys;    /* the direct-memory offset backing it */
-    uint64_t gpu_va; /* where GEM_VA mapped it, or 0 */
-    void *cpu_ptr;   /* where the shim's mmap put it, or NULL */
-    uint32_t domain; /* the AMDGPU_GEM_DOMAIN_* it was asked for */
+    int64_t phys;     /* the direct-memory offset backing it */
+    uint64_t gpu_va;  /* where GEM_VA mapped it, or 0 */
+    void *cpu_ptr;    /* where the shim's mmap put it, or NULL */
+    uint32_t domain;  /* the AMDGPU_GEM_DOMAIN_* it was asked for */
+    uint8_t gpu_prot; /* the protection `gpu_va` was mapped with */
 };
 
 static struct oops_winsys_bo s_bo[OOPS_WINSYS_MAX_BO];
@@ -165,6 +166,124 @@ static uint64_t round_up_page(uint64_t n) {
     return (n + OOPS_WINSYS_PAGE - 1u) & ~(uint64_t)(OOPS_WINSYS_PAGE - 1u);
 }
 
+/*
+ * **A GPU address keeps the pages it maps.**
+ *
+ * SuperTuxKart hung the GPU four times, each at a screen change, and the fourth run's
+ * log named the moment: buffer 26 at 0x403e00000 was unmapped and closed, a new buffer
+ * was mapped at that same address over *different* physical pages, and the next
+ * submission never retired - waited the full timeout, with no slow submission before
+ * it. Buffer 20 at 0x403400000 had gone the same way just before. Linux flushes the
+ * GPU's translations after a page-table change; nothing here does, and whether the
+ * platform's unmap and map calls do is unmeasured. A translation the GPU kept from
+ * before the change would read the old pages - freed, and handed to someone else.
+ *
+ * So a freed range stays mapped, retained with its pages, and when libdrm's allocator
+ * hands the same address out again for a buffer of the same size, that buffer takes
+ * over the retained pages - already mapped there - and its own fresh ones go back. The
+ * address never changes what it points at. Anything else (a different size, a partial
+ * overlap, a buffer the CPU has already mapped) releases what is retained there and
+ * maps afresh, and says so in the log, so a later hang can be laid against it.
+ */
+#define OOPS_WINSYS_MAX_RETAINED 512
+#define OOPS_WINSYS_RETAINED_BYTES (256ull << 20)
+
+struct retained_range {
+    bool used;
+    bool owns_phys; /* its buffer has closed, so the pages are the range's */
+    uint8_t prot;
+    uint64_t va;
+    uint64_t size;
+    int64_t phys;
+    uint64_t seq; /* retention order, for eviction */
+};
+
+static struct retained_range s_retained[OOPS_WINSYS_MAX_RETAINED];
+static uint64_t s_retained_seq;
+static uint64_t s_retained_bytes;
+
+static void retained_drop(struct retained_range *r) {
+    s_retained_bytes -= r->size;
+    memset(r, 0, sizeof(*r));
+}
+
+/* Unmaps a retained range and frees its pages if they are its to free - unless another
+ * retained range maps the same pages, which then takes them over. */
+static void retained_release(struct retained_range *r) {
+    oops_mem_unmap((void *)(uintptr_t)r->va, (size_t)r->size);
+    if (r->owns_phys) {
+        bool handed_on = false;
+        for (uint32_t i = 0; i < OOPS_WINSYS_MAX_RETAINED && !handed_on; i++) {
+            struct retained_range *q = &s_retained[i];
+            if (q != r && q->used && q->phys == r->phys) {
+                q->owns_phys = true;
+                handed_on = true;
+            }
+        }
+        if (!handed_on) {
+            oops_mem_free_direct(r->phys, (size_t)r->size);
+        }
+    }
+    retained_drop(r);
+}
+
+static void retained_release_oldest(void) {
+    struct retained_range *oldest = NULL;
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_RETAINED; i++) {
+        struct retained_range *r = &s_retained[i];
+        if (r->used && (oldest == NULL || r->seq < oldest->seq)) {
+            oldest = r;
+        }
+    }
+    if (oldest != NULL) {
+        retained_release(oldest);
+    }
+}
+
+static void retain(uint64_t va, uint64_t size, int64_t phys, uint8_t prot,
+                   bool owns_phys) {
+    struct retained_range *slot = NULL;
+
+    while (s_retained_bytes + size > OOPS_WINSYS_RETAINED_BYTES &&
+           s_retained_bytes > 0) {
+        retained_release_oldest();
+    }
+    while (slot == NULL) {
+        for (uint32_t i = 0; i < OOPS_WINSYS_MAX_RETAINED && slot == NULL; i++) {
+            if (!s_retained[i].used) {
+                slot = &s_retained[i];
+            }
+        }
+        if (slot == NULL) {
+            retained_release_oldest();
+        }
+    }
+    slot->used = true;
+    slot->owns_phys = owns_phys;
+    slot->prot = prot;
+    slot->va = va;
+    slot->size = size;
+    slot->phys = phys;
+    slot->seq = ++s_retained_seq;
+    s_retained_bytes += size;
+}
+
+/* A closing buffer whose pages a retained range still maps hands them to that range. */
+static bool retained_adopt_pages(int64_t phys) {
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_RETAINED; i++) {
+        struct retained_range *r = &s_retained[i];
+        if (r->used && r->phys == phys) {
+            r->owns_phys = true;
+            return true;
+        }
+    }
+    return false;
+}
+
+uint64_t oops_winsys_retained_bytes(void) {
+    return s_retained_bytes;
+}
+
 int oops_winsys_gem_create(union drm_amdgpu_gem_create *arg) {
     uint64_t size = round_up_page(arg->in.bo_size);
     uint64_t align =
@@ -255,10 +374,14 @@ int oops_winsys_gem_close(uint32_t handle) {
     if (bo->cpu_ptr) {
         oops_mem_unmap(bo->cpu_ptr, (size_t)bo->size);
     }
+    /* The GPU range stays mapped with its pages, retained for the next buffer libdrm
+     * puts at that address (see `retain`); pages a retained range already maps go to
+     * it rather than being freed. */
     if (bo->gpu_va) {
-        oops_mem_unmap((void *)(uintptr_t)bo->gpu_va, (size_t)bo->size);
+        retain(bo->gpu_va, bo->size, bo->phys, bo->gpu_prot, true);
+    } else if (!retained_adopt_pages(bo->phys)) {
+        oops_mem_free_direct(bo->phys, (size_t)bo->size);
     }
-    oops_mem_free_direct(bo->phys, (size_t)bo->size);
     memset(bo, 0, sizeof(*bo));
     return 0;
 }
@@ -455,6 +578,44 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg) {
                                 (unsigned long long)other->size);
             }
         }
+        /*
+         * An address with a retained range: the same buffer coming back, or a new
+         * buffer of the same size and protection that the CPU has not mapped yet,
+         * keeps the pages already there (see `retain`). Anything else releases what is
+         * retained over the range and maps afresh.
+         */
+        for (uint32_t i = 0; i < OOPS_WINSYS_MAX_RETAINED; i++) {
+            struct retained_range *r = &s_retained[i];
+            if (!r->used || r->va != arg->va_address || r->size != size ||
+                r->prot != prot) {
+                continue;
+            }
+            if (r->phys == bo->phys) {
+                retained_drop(r); /* its own pages, still mapped there */
+                bo->gpu_va = arg->va_address;
+                bo->gpu_prot = prot;
+                return 0;
+            }
+            if (r->owns_phys && bo->cpu_ptr == NULL && bo->size == size) {
+                oops_mem_free_direct(bo->phys, (size_t)bo->size);
+                bo->phys = r->phys;
+                retained_drop(r);
+                bo->gpu_va = arg->va_address;
+                bo->gpu_prot = prot;
+                oops_winsys_log_debug("VA map: buffer %u keeps the pages at 0x%llx",
+                                      arg->handle, (unsigned long long)arg->va_address);
+                return 0;
+            }
+        }
+        for (uint32_t i = 0; i < OOPS_WINSYS_MAX_RETAINED; i++) {
+            struct retained_range *r = &s_retained[i];
+            if (r->used && arg->va_address < r->va + r->size &&
+                r->va < arg->va_address + size) {
+                oops_winsys_log("VA 0x%llx: retained pages released, new ones mapped",
+                                (unsigned long long)r->va);
+                retained_release(r);
+            }
+        }
         if (oops_mem_batch_map((void *)(uintptr_t)arg->va_address, bo->phys,
                                (size_t)size, OOPS_WINSYS_PAGE, prot) != 0) {
             oops_winsys_log("mapping buffer %u at 0x%llx refused", arg->handle,
@@ -462,6 +623,7 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg) {
             return -ENOMEM;
         }
         bo->gpu_va = arg->va_address;
+        bo->gpu_prot = prot;
         /*
          * Mapping and unmapping were silent unless they failed, which is the wrong half
          * to log. A GPU protection fault names an address and nothing else, so the
@@ -481,10 +643,10 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg) {
     }
     case AMDGPU_VA_OP_UNMAP:
         if (bo->gpu_va) {
-            oops_winsys_log("VA unmap: buffer %u at 0x%llx, %llu bytes", arg->handle,
-                            (unsigned long long)bo->gpu_va,
+            oops_winsys_log("VA unmap: buffer %u at 0x%llx, %llu bytes (retained)",
+                            arg->handle, (unsigned long long)bo->gpu_va,
                             (unsigned long long)bo->size);
-            oops_mem_unmap((void *)(uintptr_t)bo->gpu_va, (size_t)bo->size);
+            retain(bo->gpu_va, bo->size, bo->phys, bo->gpu_prot, false);
             bo->gpu_va = 0;
         }
         return 0;

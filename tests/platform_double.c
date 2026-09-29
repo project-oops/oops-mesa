@@ -81,9 +81,13 @@ int sceKernelBatchMap(struct obs_batch_map_entry *entries, int num_entries,
     return 0;
 }
 
+/* Counted, so a test can show an address was reused without being unmapped. */
+int g_platform_munmaps;
+
 int sceKernelMunmap(void *addr, size_t len) {
     (void)addr;
     (void)len;
+    g_platform_munmaps++;
     return 0;
 }
 
