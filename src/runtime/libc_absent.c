@@ -11,6 +11,8 @@
  */
 
 #include <assert.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <dirent.h>
@@ -29,6 +31,7 @@
 #include <sys/cpuset.h>
 #include <sys/utsname.h>
 
+#include "oops/fs.h"
 #include "oops_winsys.h"
 
 /*
@@ -45,20 +48,49 @@ void __assert(const char *func, const char *file, int line, const char *expr) {
 }
 
 /*
- * The platform has no environment, so every name is unset and null is the correct
- * answer. Mesa reads only optional debug switches through it (`os_get_option`, first
- * called from `driParseConfigFiles`). Logged once, not per call.
+ * The environment, kept in the process.
+ *
+ * The platform exports no environment and a title starts without one, so the table
+ * starts empty and every name reads as unset until the title sets it: Mesa's debug
+ * switches (`os_get_option`, first called from `driParseConfigFiles`) stay off, as
+ * before. A title that sets a variable reads it back - SuperTuxKart is pointed at its
+ * data by `SUPERTUXKART_DATADIR` and its siblings, and ports read `HOME`.
+ *
+ * Each entry is one `NAME=VALUE` allocation, as a POSIX `environ` entry is, and
+ * `getenv` returns the value inside it. Not thread-safe, which POSIX does not require
+ * of `setenv`.
  */
-char *getenv(const char *name) {
-    static int said = 0;
-    if (!said) {
-        said = 1;
-        oops_winsys_log(
-            "getenv: this platform exports none, so every name reads as unset. "
-            "Mesa's debug switches are therefore all off. Said once, not per call.");
+#define ENV_MAX 128
+static char *s_env[ENV_MAX];
+
+/* The entry for `name`, or -1. */
+static int env_find(const char *name, size_t len) {
+    for (int i = 0; i < ENV_MAX; i++) {
+        if (s_env[i] && strncmp(s_env[i], name, len) == 0 && s_env[i][len] == '=') {
+            return i;
+        }
     }
-    (void)name;
-    return NULL;
+    return -1;
+}
+
+/* A name POSIX accepts: not empty and without '='. Its length through `*len`. */
+static int env_name_ok(const char *name, size_t *len) {
+    if (!name || !name[0] || strchr(name, '=')) {
+        return 0;
+    }
+    *len = strlen(name);
+    return 1;
+}
+
+char *getenv(const char *name) {
+    size_t len;
+    int i;
+
+    if (!env_name_ok(name, &len)) {
+        return NULL;
+    }
+    i = env_find(name, len);
+    return i < 0 ? NULL : s_env[i] + len + 1;
 }
 
 /* `uname`'s implementation, reached from radeonsi's device-description logging. */
@@ -165,34 +197,64 @@ __attribute__((no_builtin("strndup"))) char *strndup(const char *s, size_t n) {
     return out;
 }
 
-/*
- * Setting a variable fails, since a later `getenv` cannot find it. Mesa reaches these
- * through `os_set_option` (`mesa/src/util/os_misc.c:347`), which ignores the result.
- * Logged once.
- */
-static void said_no_environment(const char *who) {
-    static int said = 0;
-    if (!said) {
-        said = 1;
-        oops_winsys_log(
-            "%s: this platform has no environment to write to, so a name cannot be "
-            "set and a later getenv would not find it. Said once, not per call.",
-            who);
-    }
-}
-
+/* Into the table `getenv` reads. Mesa also reaches this through `os_set_option`
+ * (`mesa/src/util/os_misc.c:347`). A full table is ENOMEM, and says so. */
 int setenv(const char *name, const char *value, int overwrite) {
-    (void)name;
-    (void)value;
-    (void)overwrite;
-    said_no_environment("setenv");
-    return -1;
+    size_t len, vlen;
+    char *entry;
+    int i;
+
+    if (!env_name_ok(name, &len)) {
+        errno = EINVAL;
+        return -1;
+    }
+    i = env_find(name, len);
+    if (i >= 0 && !overwrite) {
+        return 0;
+    }
+    if (!value) {
+        value = "";
+    }
+    vlen = strlen(value);
+    entry = malloc(len + 1 + vlen + 1);
+    if (!entry) {
+        errno = ENOMEM;
+        return -1;
+    }
+    memcpy(entry, name, len);
+    entry[len] = '=';
+    memcpy(entry + len + 1, value, vlen + 1);
+    if (i < 0) {
+        for (i = 0; i < ENV_MAX && s_env[i]; i++) {
+        }
+        if (i == ENV_MAX) {
+            free(entry);
+            oops_winsys_log("setenv: the environment is full (%d entries); %s not set",
+                            ENV_MAX, name);
+            errno = ENOMEM;
+            return -1;
+        }
+    } else {
+        free(s_env[i]);
+    }
+    s_env[i] = entry;
+    return 0;
 }
 
 int unsetenv(const char *name) {
-    (void)name;
-    said_no_environment("unsetenv");
-    return -1;
+    size_t len;
+    int i;
+
+    if (!env_name_ok(name, &len)) {
+        errno = EINVAL;
+        return -1;
+    }
+    i = env_find(name, len);
+    if (i >= 0) {
+        free(s_env[i]);
+        s_env[i] = NULL;
+    }
+    return 0;
 }
 
 /*
@@ -507,11 +569,132 @@ ssize_t readlink(const char *path, char *buf, size_t bufsiz) {
     return -1;
 }
 
+/*
+ * `stat` over the SDK's file calls, the way oops-apps' `common/posix/posix.c` answers
+ * it for a freestanding title: the path opens (it exists), `<path>/.` opens (it is a
+ * directory - a file answers ENOTDIR), and a seek to the end gives a file's size. Mode,
+ * size and link count are filled; ownership and times are not known and read as zero.
+ * Measured on hardware from SuperTuxKart: libkernel's `lstat` and `access` are refused
+ * with EPERM for a title, and `oops_fs_exists` (SYS_open) sees the same file.
+ */
+/*
+ * The working directory, kept in the process.
+ *
+ * A title has no working directory the platform keeps for it: libkernel's `chdir` is
+ * not one a title can use, and libSceLibcInternal's `getcwd` jumps through a pointer
+ * the platform's libc start-up fills (SuperTuxKart faulted in it). So the directory is
+ * this string, starting at `/app0` where the package is mounted, and every relative
+ * path this runtime resolves - `stat`, `opendir`, `realpath` - is taken against it.
+ * Irrlicht needs it real: it mounts an asset folder by `chdir`-ing into it, listing it,
+ * and `stat`-ing each entry by its bare name.
+ */
+static char s_cwd[PATH_MAX] = "/app0";
+
+/* `path` made absolute against the working directory and canonicalised by oops-sdk
+ * (`.`, `..` and repeated separators removed). */
+const char *oops_mesa_absolute_path(const char *path, char *buf, size_t max);
+const char *oops_fs_resolve_path(const char *path, char *buf,
+                                 size_t max); /* oops-sdk */
+
+const char *oops_mesa_absolute_path(const char *path, char *buf, size_t max) {
+    char joined[PATH_MAX];
+
+    if (path[0] != '/') {
+        if ((size_t)snprintf(joined, sizeof(joined), "%s/%s", s_cwd, path) >=
+            sizeof(joined)) {
+            return path; /* too long to join: fails as written, not as another file */
+        }
+        path = joined;
+    }
+    return oops_fs_resolve_path(path, buf, max);
+}
+
+char *getcwd(char *buf, size_t size) {
+    const size_t len = strlen(s_cwd) + 1;
+    char *out = buf;
+
+    if (buf == NULL) {
+        out = malloc(size > len ? size : len);
+        if (out == NULL) {
+            errno = ENOMEM;
+            return NULL;
+        }
+    } else if (size == 0) {
+        errno = EINVAL;
+        return NULL;
+    } else if (size < len) {
+        errno = ERANGE;
+        return NULL;
+    }
+    memcpy(out, s_cwd, len);
+    return out;
+}
+
+static int stat_is_directory(const char *path);
+
+int chdir(const char *path) {
+    char abs[PATH_MAX];
+    const char *canon;
+
+    if (path == NULL || path[0] == '\0') {
+        errno = ENOENT;
+        return -1;
+    }
+    canon = oops_mesa_absolute_path(path, abs, sizeof(abs));
+    if (!oops_fs_exists(canon)) {
+        errno = ENOENT;
+        return -1;
+    }
+    if (!stat_is_directory(canon)) {
+        errno = ENOTDIR;
+        return -1;
+    }
+    if (strlen(canon) >= sizeof(s_cwd)) {
+        errno = ENAMETOOLONG;
+        return -1;
+    }
+    memcpy(s_cwd, canon, strlen(canon) + 1);
+    return 0;
+}
+
+static int stat_is_directory(const char *path) {
+    char dot[PATH_MAX];
+    int fd;
+
+    if ((size_t)snprintf(dot, sizeof(dot), "%s/.", path) >= sizeof(dot)) {
+        return 0;
+    }
+    fd = oops_fs_open(dot, OOPS_O_RDONLY, 0);
+    if (fd < 0) {
+        return 0;
+    }
+    (void)oops_fs_close(fd);
+    return 1;
+}
+
 int stat(const char *path, struct stat *sb) {
-    (void)sb;
-    oops_winsys_log("stat(\"%s\") was called; this shim has no filesystem to describe.",
-                    path ? path : "(null)");
-    return -1;
+    char abs[PATH_MAX];
+    int64_t size;
+
+    if (path == NULL || sb == NULL) {
+        errno = EFAULT;
+        return -1;
+    }
+    path = oops_mesa_absolute_path(path, abs, sizeof(abs));
+    if (!oops_fs_exists(path)) {
+        errno = ENOENT;
+        return -1;
+    }
+    memset(sb, 0, sizeof(*sb));
+    sb->st_nlink = 1;
+    if (stat_is_directory(path)) {
+        sb->st_mode = S_IFDIR | 0755;
+        return 0;
+    }
+    size = oops_fs_file_size(path);
+    sb->st_mode = S_IFREG | 0644;
+    sb->st_size = size > 0 ? (off_t)size : 0;
+    return 0;
 }
 
 int mkstemp(char *template_name) {
@@ -642,30 +825,82 @@ int sigdelset(sigset_t *set, int signo) {
 }
 
 /*
- * The directory walk and device name, from Mesa's shader-cache eviction and descriptor
- * walk (`mesa/src/util/disk_cache*`, `mesa/src/util/os_file.c`); `system` is the
- * disassembler hand-off. All fail the way their callers test for.
+ * The directory walk, over the SDK's reader (`oops_fs_opendir`, which reads through
+ * `sceKernelGetdents`). Mesa's shader-cache eviction reaches it
+ * (`mesa/src/util/disk_cache*`); a title lists its own data with it - SuperTuxKart
+ * enumerates its translations, karts and tracks.
+ *
+ * `DIR` is the sysroot's incomplete `struct _dirdesc`, defined here. `readdir` returns
+ * a `struct dirent` the `DIR` owns and the next call overwrites, as POSIX says. The SDK
+ * gives no inode, so `d_fileno` is the entry's position, which is non-zero - a zero
+ * `d_fileno` is how BSD marks a deleted entry.
  */
+struct _dirdesc {
+    oops_dir_t *dir;
+    struct dirent ent;
+    ino_t next;
+};
+
 DIR *opendir(const char *name) {
-    oops_winsys_log(
-        "opendir(\"%s\") was called; a title has no filesystem to walk, and the "
-        "caller tests for null.",
-        name ? name : "(null)");
-    return NULL;
+    DIR *d;
+
+    if (name == NULL) {
+        errno = EFAULT;
+        return NULL;
+    }
+    d = calloc(1, sizeof(*d));
+    if (d == NULL) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    {
+        char abs[PATH_MAX];
+        d->dir = oops_fs_opendir(oops_mesa_absolute_path(name, abs, sizeof(abs)));
+    }
+    if (d->dir == NULL) {
+        free(d);
+        errno = ENOENT;
+        return NULL;
+    }
+    return d;
 }
 
 struct dirent *readdir(DIR *dirp) {
-    (void)dirp;
-    oops_winsys_log(
-        "readdir was called; opendir never opened anything, so this is a caller that "
-        "did not check.");
-    return NULL;
+    oops_dirent_t e;
+    size_t len;
+    int rc;
+
+    if (dirp == NULL) {
+        errno = EBADF;
+        return NULL;
+    }
+    rc = oops_fs_readdir(dirp->dir, &e);
+    if (rc <= 0) {
+        if (rc < 0) {
+            errno = EIO; /* end of directory leaves errno alone */
+        }
+        return NULL;
+    }
+    len = strnlen(e.name, sizeof(dirp->ent.d_name) - 1);
+    memset(&dirp->ent, 0, sizeof(dirp->ent));
+    dirp->ent.d_fileno = ++dirp->next;
+    dirp->ent.d_reclen = (uint16_t)sizeof(dirp->ent);
+    dirp->ent.d_type = e.is_directory ? DT_DIR : DT_REG;
+    dirp->ent.d_namlen = (uint16_t)len;
+    memcpy(dirp->ent.d_name, e.name, len);
+    return &dirp->ent;
 }
 
 int closedir(DIR *dirp) {
-    (void)dirp;
-    oops_winsys_log("closedir was called; nothing was ever opened.");
-    return -1;
+    int rc;
+
+    if (dirp == NULL) {
+        errno = EBADF;
+        return -1;
+    }
+    rc = oops_fs_closedir(dirp->dir);
+    free(dirp);
+    return rc;
 }
 
 char *devname_r(dev_t dev, mode_t type, char *buf, int len) {
@@ -780,10 +1015,17 @@ int shm_open(const char *path, int flags, mode_t mode) {
 }
 
 int setjmp(jmp_buf env) {
+    /* Once: every shader compile calls it, and the explanation does not change. The
+     * failure that matters is a longjmp, which is logged below every time. */
+    static int s_said;
     (void)env;
-    oops_winsys_log(
-        "setjmp was called - this is SPIR-V's error recovery, which this build does "
-        "not implement. Returning 0 as a direct call; a longjmp to it will stop.");
+    if (!s_said) {
+        s_said = 1;
+        oops_winsys_log(
+            "setjmp was called - this is SPIR-V's error recovery, which this build "
+            "does "
+            "not implement. Returning 0 as a direct call; a longjmp to it will stop.");
+    }
     return 0;
 }
 

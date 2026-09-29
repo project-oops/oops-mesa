@@ -22,6 +22,24 @@ struct oops_gfx {
     bool in_use;
 };
 
+/*
+ * GL entry points by name, from Mesa's dispatch table.
+ *
+ * oops-apps' SDL backend answers `SDL_GL_GetProcAddress` through
+ * `oops_gl_get_proc_address`, which oops-gl defines for its titles; SDL carries only a
+ * weak fallback that answers NULL. A Mesa title links no oops-gl, so every name came
+ * back NULL, and SuperTuxKart's Irrlicht stored those as its GL entry points and
+ * called one: `rip 0` in `COpenGLDriver`. Mesa's shared glapi resolves any GL name to
+ * its dispatch stub (`mesa/src/mesa/glapi/glapi/glapi.h:109`), current context or not.
+ */
+typedef void (*oops_mesa_glapi_proc)(void);
+oops_mesa_glapi_proc _mesa_glapi_get_proc_address(const char *funcName);
+
+void *oops_gl_get_proc_address(const char *name);
+void *oops_gl_get_proc_address(const char *name) {
+    return name ? (void *)_mesa_glapi_get_proc_address(name) : NULL;
+}
+
 static struct oops_gfx s_gfx;
 
 oops_gfx_t *oops_gfx_create(const oops_gfx_desc_t *desc) {
