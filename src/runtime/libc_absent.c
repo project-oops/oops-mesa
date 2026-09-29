@@ -33,6 +33,7 @@
 #include <sys/utsname.h>
 
 #include "oops/fs.h"
+#include "oops/time.h" /* oops_time_utc_offset */
 #include "oops_winsys.h"
 
 /*
@@ -119,20 +120,36 @@ ssize_t getline(char **linep, size_t *capp, FILE *stream) {
  * Local time, reached from Mesa's logging and from games (SuperTuxKart stamps its
  * saves and dates its news with it).
  *
- * The answer is UTC: a true time, with the zone offset recorded as 0 rather than an
- * invented one. The console's zone is in libSceRtc (`sceRtcConvertUtcToLocalTime`,
- * present on the hardware: obscene `data/hardware/ps5-full.txt:11828`), but no title
- * has loaded that module yet, and an import that does not resolve kills the title on
- * its first call - worse than the wrong zone. The broken-down fields are computed here,
- * by the days-to-civil method, because the platform exports no `gmtime_r` either.
+ * The console's zone, daylight saving included, comes from oops-sdk's
+ * `oops_time_utc_offset`; where it has no answer the result is UTC with the offset
+ * recorded as 0 - a true time, not an invented zone. The broken-down fields are
+ * computed here, by the days-to-civil method, because the platform exports no
+ * `gmtime_r` either.
  */
 struct tm *localtime_r(const time_t *clock, struct tm *result) {
     int64_t secs, days, rem, era, doe, yoe, doy, mp, y;
+    int32_t offset = 0;
 
     if (clock == NULL || result == NULL) {
         return NULL;
     }
     secs = (int64_t)*clock;
+    {
+        /* Once, so the first run says whether the platform answered. */
+        static int s_said;
+        const int rc = oops_time_utc_offset(secs, &offset);
+        if (rc != 0) {
+            offset = 0;
+        }
+        if (!s_said) {
+            s_said = 1;
+            oops_winsys_log(rc == 0
+                                ? "localtime_r: the console is UTC%+d s"
+                                : "localtime_r: no zone from the platform (%d); UTC",
+                            rc == 0 ? offset : rc);
+        }
+    }
+    secs += offset;
 
     days = secs / 86400;
     rem = secs % 86400;
@@ -163,6 +180,7 @@ struct tm *localtime_r(const time_t *clock, struct tm *result) {
         result->tm_yday =
             before[result->tm_mon] + result->tm_mday - 1 + (leap && result->tm_mon > 1);
     }
+    result->tm_gmtoff = offset;
     return result;
 }
 
