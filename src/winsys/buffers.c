@@ -611,8 +611,13 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg) {
             struct retained_range *r = &s_retained[i];
             if (r->used && arg->va_address < r->va + r->size &&
                 r->va < arg->va_address + size) {
-                oops_winsys_log("VA 0x%llx: retained pages released, new ones mapped",
-                                (unsigned long long)r->va);
+                /* Why the pages could not be kept, so the take-over can be widened to
+                 * whatever case the log shows is common. */
+                oops_winsys_log(
+                    "VA 0x%llx swapped: at 0x%llx sz %llx/%llx prot %x/%x %s cpu%d",
+                    (unsigned long long)r->va, (unsigned long long)arg->va_address,
+                    (unsigned long long)r->size, (unsigned long long)size, r->prot,
+                    prot, r->owns_phys ? "closed" : "live", bo->cpu_ptr ? 1 : 0);
                 retained_release(r);
             }
         }
