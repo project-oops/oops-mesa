@@ -44,10 +44,22 @@
 
 /* How long to wait before calling a submission lost. oops-gl uses the same shape: a
  * bounded poll rather than an unbounded one, because a stream that never retires must
- * become a loud failure and not a hang. */
-#define OOPS_WINSYS_FENCE_POLLS 100000
+ * become a loud failure and not a hang.
+ *
+ * Bounded by the clock, not by a poll count. The count was 100000 polls with a 10 us
+ * sleep between, nominally a second, but the sleep's real length here was never
+ * measured - and a screen change (a track loading, fresh shaders and textures) queues
+ * far more work than a menu frame. SuperTuxKart was declared hung three times at
+ * exactly such changes, each ending in "context is lost". Five seconds is well beyond
+ * any frame; a submission slower than every one before it (and over 50 ms) is logged,
+ * so a run shows whether slow submissions exist at all. The poll count stays as the
+ * bound when the platform clock does not resolve. */
+#define OOPS_WINSYS_FENCE_TIMEOUT_US 5000000u
+#define OOPS_WINSYS_FENCE_POLLS 500000
+#define OOPS_WINSYS_SLOW_US 50000u
 
 extern int sceKernelUsleep(unsigned int microseconds) __attribute__((weak));
+extern uint64_t sceKernelGetProcessTime(void) __attribute__((weak));
 
 /* The proven submit entry point. oops-gl declares it the same way (oops-sdk
  * gl_context.c) rather than through agc/driver.h, which only carries the queue-less
@@ -468,23 +480,41 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg) {
             return -EIO;
         }
 
+        const uint64_t start_us =
+            sceKernelGetProcessTime ? sceKernelGetProcessTime() : 0;
+        uint64_t waited_us = 0;
+        static uint64_t s_slowest_us;
         for (int i = 0; i < OOPS_WINSYS_FENCE_POLLS; i++) {
 #if defined(__x86_64__)
             __builtin_ia32_clflush((const void *)s_fence);
 #endif
+            if (sceKernelGetProcessTime) {
+                waited_us = sceKernelGetProcessTime() - start_us;
+            }
             if (s_fence[0] == OOPS_WINSYS_FENCE_FIRED) {
                 fired = 1;
+                break;
+            }
+            if (waited_us > OOPS_WINSYS_FENCE_TIMEOUT_US) {
                 break;
             }
             if (sceKernelUsleep) {
                 sceKernelUsleep(10);
             }
         }
+        if (fired && waited_us > OOPS_WINSYS_SLOW_US && waited_us > s_slowest_us) {
+            s_slowest_us = waited_us;
+            oops_winsys_log("submission %llu took %llu us to retire, the slowest yet",
+                            (unsigned long long)s_sequence + 1u,
+                            (unsigned long long)waited_us);
+        }
         if (!fired) {
             /* A stream that never retires is a failure, and saying so is the whole
              * point. It is never reported as success with a fence nobody will check. */
-            oops_winsys_log("submission %llu did not retire; fence still 0x%08x",
-                            (unsigned long long)s_sequence + 1u, s_fence[0]);
+            oops_winsys_log(
+                "submission %llu did not retire in %llu us; fence still 0x%08x",
+                (unsigned long long)s_sequence + 1u, (unsigned long long)waited_us,
+                s_fence[0]);
             /* Tell the context, so that a later reset query answers from something
              * observed rather than from an assumption that all is well. */
             oops_winsys_ctx_note_hang(arg->in.ctx_id);

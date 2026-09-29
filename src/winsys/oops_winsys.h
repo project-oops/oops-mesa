@@ -89,10 +89,6 @@ int oops_winsys_memory_info(struct drm_amdgpu_memory_info *out);
 /* Bytes held by the buffers this shim has created and not yet closed. */
 uint64_t oops_winsys_bo_bytes_live(void);
 
-/* Bytes of GPU address range kept mapped after an unmap or close, until the address is
- * reused (buffers.c, `park`). */
-uint64_t oops_winsys_parked_bytes(void);
-
 /* How many bytes one buffer occupies, as asked for at GEM_CREATE and rounded to a page.
  * Zero for a handle that is not live. The platform shim uses it to tell a tiled colour
  * target from a linear one, which nothing in Mesa's image API will report on a surface
