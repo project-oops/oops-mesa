@@ -572,8 +572,64 @@ static void test_a_duplicated_device_fd_is_served(void) {
           "once closed, that number is refused as a descriptor that was never opened");
 }
 
+/* Creates a 64 KiB buffer and maps it at `va`; returns its handle, or 0. */
+static uint32_t mapped_buffer(uint64_t va) {
+    union drm_amdgpu_gem_create c;
+    struct drm_amdgpu_gem_va m;
+
+    memset(&c, 0, sizeof(c));
+    c.in.bo_size = 0x10000;
+    c.in.alignment = 0x1000;
+    c.in.domains = AMDGPU_GEM_DOMAIN_VRAM;
+    if (oops_winsys_gem_create(&c) != 0) {
+        return 0;
+    }
+    memset(&m, 0, sizeof(m));
+    m.handle = c.out.handle;
+    m.operation = AMDGPU_VA_OP_MAP;
+    m.va_address = va;
+    m.map_size = 0x10000;
+    m.flags = AMDGPU_VM_PAGE_READABLE;
+    return oops_winsys_gem_va(&m) == 0 ? c.out.handle : 0;
+}
+
+static void test_a_freed_range_stays_mapped_until_reused(void) {
+    /* A late GPU read of a freed buffer hangs this hardware where Linux logs a fault,
+     * so a freed range is parked, and only released when its address is handed out
+     * again. */
+    const uint64_t va = 0x0000000300000000ull;
+    const uint64_t before = oops_winsys_parked_bytes();
+    struct drm_amdgpu_gem_va u;
+    uint32_t a = mapped_buffer(va);
+
+    check(a != 0, "a buffer maps");
+    memset(&u, 0, sizeof(u));
+    u.handle = a;
+    u.operation = AMDGPU_VA_OP_UNMAP;
+    u.va_address = va;
+    check(oops_winsys_gem_va(&u) == 0, "and unmaps");
+    check(oops_winsys_parked_bytes() == before + 0x10000,
+          "its range is parked rather than torn down");
+    check(oops_winsys_gem_close(a) == 0, "closing it succeeds");
+    check(oops_winsys_parked_bytes() == before + 0x10000,
+          "and its pages stay with the parked range");
+
+    uint32_t b = mapped_buffer(va);
+    check(b != 0, "a new buffer maps at the same address");
+    check(oops_winsys_parked_bytes() == before, "which releases what was parked there");
+
+    check(oops_winsys_gem_close(b) == 0, "a mapped buffer closes");
+    check(oops_winsys_parked_bytes() == before + 0x10000,
+          "and a close without an unmap parks the range too");
+    uint32_t c = mapped_buffer(va + 0x8000);
+    check(c != 0 && oops_winsys_parked_bytes() == before,
+          "a mapping that only overlaps a parked range releases it");
+    oops_winsys_gem_close(c);
+}
+
 int main(void) {
     printf("oops-mesa winsys host suite\n");
+    test_a_freed_range_stays_mapped_until_reused();
     test_version_identifies_as_amdgpu();
     test_a_buffer_through_its_whole_life();
     test_contexts_track_what_they_can();

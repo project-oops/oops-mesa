@@ -90,3 +90,13 @@ int sceKernelMunmap(void *addr, size_t len) {
 size_t sceKernelGetDirectMemorySize(void) {
     return (size_t)1 << 32;
 }
+
+/* oops-sdk's memory.c logs through this, and its definition lives in system.c, which
+ * the suite does not link. The suite asserts on bookkeeping, so the lines are dropped.
+ */
+void oops_kprintf_level(int level, const char *tag, const char *fmt, ...);
+void oops_kprintf_level(int level, const char *tag, const char *fmt, ...) {
+    (void)level;
+    (void)tag;
+    (void)fmt;
+}

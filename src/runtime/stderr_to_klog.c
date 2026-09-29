@@ -12,6 +12,7 @@
 
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h> /* malloc/free, for a formatted line longer than the stack buffer */
 #include <string.h>
@@ -100,6 +101,8 @@ static void line_append(const char *text, size_t len) {
  * `fprintf`, and both were dropped.
  */
 extern int64_t oops_fs_write(int fd, const void *buf, size_t count);
+/* POSIX, so a strict C11 host build of this file does not see it in <stdio.h>. */
+extern int fileno(FILE *stream);
 
 static int fd_write_all(int fd, const char *text, size_t len) {
     size_t done = 0;

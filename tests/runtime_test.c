@@ -25,6 +25,19 @@ void oops_klog(const char *tag, const char *msg) {
     g_lines++;
 }
 
+/* oops-sdk's file write, which the subject uses for descriptors past stderr. Counted,
+ * not performed: the subject defines `write` itself, so there is nothing safe to call.
+ */
+#include <stdint.h>
+static int g_fs_writes;
+int64_t oops_fs_write(int fd, const void *buf, size_t count);
+int64_t oops_fs_write(int fd, const void *buf, size_t count) {
+    (void)fd;
+    (void)buf;
+    g_fs_writes++;
+    return (int64_t)count;
+}
+
 /* The subject, included rather than linked so that its statics are reachable and so
  * that the suite exercises the same translation unit a title compiles. */
 #include "stderr_to_klog.c"

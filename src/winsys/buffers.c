@@ -165,6 +165,127 @@ static uint64_t round_up_page(uint64_t n) {
     return (n + OOPS_WINSYS_PAGE - 1u) & ~(uint64_t)(OOPS_WINSYS_PAGE - 1u);
 }
 
+/*
+ * **A freed GPU range stays mapped until its address is handed out again.**
+ *
+ * On Linux, a GPU read of an address nobody maps is a VM fault the kernel logs and the
+ * GPU survives. Here it is a hang that kills the title. SuperTuxKart hung twice on a
+ * screen change (the tutorial offer; the keyboard closing), each time a few frames
+ * after menu textures were freed and with nothing mapped at their addresses since - the
+ * shape of a late read of a freed texture, which on Linux would have cost one logged
+ * fault.
+ *
+ * So an unmapped or closed buffer's GPU range is parked: its mapping stays, and once
+ * the buffer closes its pages stay too, until a new mapping overlaps the range -
+ * libdrm's VA allocator reusing the address - or the budget below runs out and the
+ * oldest go first. A late read then sees the old contents instead of a hole. Submission
+ * is synchronous (submit.c), so nothing parked is in flight; what this covers is a read
+ * issued after the free.
+ */
+#define OOPS_WINSYS_MAX_PARKED 512
+#define OOPS_WINSYS_PARKED_BYTES (256ull << 20)
+
+struct parked_range {
+    bool used;
+    bool owns_phys; /* the buffer has closed, so freeing the pages is ours */
+    uint64_t va;
+    uint64_t size;
+    int64_t phys;
+    uint64_t seq; /* parking order, for eviction */
+};
+
+static struct parked_range s_parked[OOPS_WINSYS_MAX_PARKED];
+static uint64_t s_parked_seq;
+static uint64_t s_parked_bytes;
+
+static void parked_release(struct parked_range *p) {
+    oops_mem_unmap((void *)(uintptr_t)p->va, (size_t)p->size);
+    if (p->owns_phys) {
+        /* Another parked range over the same pages (a buffer unmapped at one address
+         * and closed while parked at another) takes the pages over rather than being
+         * left mapping freed memory. */
+        bool handed_on = false;
+        for (uint32_t i = 0; i < OOPS_WINSYS_MAX_PARKED; i++) {
+            struct parked_range *q = &s_parked[i];
+            if (q != p && q->used && q->phys == p->phys) {
+                q->owns_phys = true;
+                handed_on = true;
+                break;
+            }
+        }
+        if (!handed_on) {
+            oops_mem_free_direct(p->phys, (size_t)p->size);
+        }
+    }
+    s_parked_bytes -= p->size;
+    memset(p, 0, sizeof(*p));
+}
+
+/* Releases every parked range a new mapping of [va, va + size) overlaps. */
+static void parked_release_overlapping(uint64_t va, uint64_t size) {
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_PARKED; i++) {
+        struct parked_range *p = &s_parked[i];
+        if (p->used && va < p->va + p->size && p->va < va + size) {
+            parked_release(p);
+        }
+    }
+}
+
+static void parked_release_oldest(void) {
+    struct parked_range *oldest = NULL;
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_PARKED; i++) {
+        struct parked_range *p = &s_parked[i];
+        if (p->used && (oldest == NULL || p->seq < oldest->seq)) {
+            oldest = p;
+        }
+    }
+    if (oldest != NULL) {
+        parked_release(oldest);
+    }
+}
+
+static void park(uint64_t va, uint64_t size, int64_t phys, bool owns_phys) {
+    struct parked_range *slot = NULL;
+
+    while (s_parked_bytes + size > OOPS_WINSYS_PARKED_BYTES && s_parked_bytes > 0) {
+        parked_release_oldest();
+    }
+    for (;;) {
+        for (uint32_t i = 0; i < OOPS_WINSYS_MAX_PARKED && slot == NULL; i++) {
+            if (!s_parked[i].used) {
+                slot = &s_parked[i];
+            }
+        }
+        if (slot != NULL) {
+            break;
+        }
+        parked_release_oldest();
+    }
+    slot->used = true;
+    slot->owns_phys = owns_phys;
+    slot->va = va;
+    slot->size = size;
+    slot->phys = phys;
+    slot->seq = ++s_parked_seq;
+    s_parked_bytes += size;
+}
+
+uint64_t oops_winsys_parked_bytes(void) {
+    return s_parked_bytes;
+}
+
+/* A closing buffer whose pages a parked range still maps hands them to that range. */
+static bool parked_adopt_pages(int64_t phys) {
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_PARKED; i++) {
+        struct parked_range *p = &s_parked[i];
+        if (p->used && p->phys == phys) {
+            p->owns_phys = true;
+            return true;
+        }
+    }
+    return false;
+}
+
 int oops_winsys_gem_create(union drm_amdgpu_gem_create *arg) {
     uint64_t size = round_up_page(arg->in.bo_size);
     uint64_t align =
@@ -255,10 +376,13 @@ int oops_winsys_gem_close(uint32_t handle) {
     if (bo->cpu_ptr) {
         oops_mem_unmap(bo->cpu_ptr, (size_t)bo->size);
     }
+    /* The GPU range is parked with its pages rather than torn down (see `park`); pages
+     * a parked range already maps go to it instead of being freed. */
     if (bo->gpu_va) {
-        oops_mem_unmap((void *)(uintptr_t)bo->gpu_va, (size_t)bo->size);
+        park(bo->gpu_va, bo->size, bo->phys, true);
+    } else if (!parked_adopt_pages(bo->phys)) {
+        oops_mem_free_direct(bo->phys, (size_t)bo->size);
     }
-    oops_mem_free_direct(bo->phys, (size_t)bo->size);
     memset(bo, 0, sizeof(*bo));
     return 0;
 }
@@ -455,6 +579,8 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg) {
                                 (unsigned long long)other->size);
             }
         }
+        /* The address is being handed out again: whatever was parked there goes now. */
+        parked_release_overlapping(arg->va_address, size);
         if (oops_mem_batch_map((void *)(uintptr_t)arg->va_address, bo->phys,
                                (size_t)size, OOPS_WINSYS_PAGE, prot) != 0) {
             oops_winsys_log("mapping buffer %u at 0x%llx refused", arg->handle,
@@ -481,10 +607,10 @@ int oops_winsys_gem_va(struct drm_amdgpu_gem_va *arg) {
     }
     case AMDGPU_VA_OP_UNMAP:
         if (bo->gpu_va) {
-            oops_winsys_log("VA unmap: buffer %u at 0x%llx, %llu bytes", arg->handle,
-                            (unsigned long long)bo->gpu_va,
+            oops_winsys_log("VA unmap: buffer %u at 0x%llx, %llu bytes (parked)",
+                            arg->handle, (unsigned long long)bo->gpu_va,
                             (unsigned long long)bo->size);
-            oops_mem_unmap((void *)(uintptr_t)bo->gpu_va, (size_t)bo->size);
+            park(bo->gpu_va, bo->size, bo->phys, false);
             bo->gpu_va = 0;
         }
         return 0;
