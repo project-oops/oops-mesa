@@ -13,6 +13,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <dirent.h>
@@ -114,14 +115,55 @@ ssize_t getline(char **linep, size_t *capp, FILE *stream) {
     return -1;
 }
 
-/* Time formatting, reached from Mesa's logging. */
+/*
+ * Local time, reached from Mesa's logging and from games (SuperTuxKart stamps its
+ * saves and dates its news with it).
+ *
+ * The answer is UTC: a true time, with the zone offset recorded as 0 rather than an
+ * invented one. The console's zone is in libSceRtc (`sceRtcConvertUtcToLocalTime`,
+ * present on the hardware: obscene `data/hardware/ps5-full.txt:11828`), but no title
+ * has loaded that module yet, and an import that does not resolve kills the title on
+ * its first call - worse than the wrong zone. The broken-down fields are computed here,
+ * by the days-to-civil method, because the platform exports no `gmtime_r` either.
+ */
 struct tm *localtime_r(const time_t *clock, struct tm *result) {
-    (void)clock;
-    (void)result;
-    oops_winsys_log(
-        "localtime_r was called; this platform does not export it and the shim will "
-        "not invent a broken-down time. Returning null.");
-    return NULL;
+    int64_t secs, days, rem, era, doe, yoe, doy, mp, y;
+
+    if (clock == NULL || result == NULL) {
+        return NULL;
+    }
+    secs = (int64_t)*clock;
+
+    days = secs / 86400;
+    rem = secs % 86400;
+    if (rem < 0) {
+        rem += 86400;
+        days -= 1;
+    }
+    memset(result, 0, sizeof(*result));
+    result->tm_hour = (int)(rem / 3600);
+    result->tm_min = (int)(rem % 3600 / 60);
+    result->tm_sec = (int)(rem % 60);
+    result->tm_wday = (int)((days % 7 + 11) % 7); /* 1970-01-01 was a Thursday */
+
+    days += 719468; /* to 0000-03-01 */
+    era = (days >= 0 ? days : days - 146096) / 146097;
+    doe = days - era * 146097;
+    yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    mp = (5 * doy + 2) / 153;
+    y = yoe + era * 400 + (mp >= 10 ? 1 : 0);
+    result->tm_mday = (int)(doy - (153 * mp + 2) / 5 + 1);
+    result->tm_mon = (int)(mp < 10 ? mp + 2 : mp - 10);
+    result->tm_year = (int)(y - 1900);
+    {
+        static const int before[12] = {0,   31,  59,  90,  120, 151,
+                                       181, 212, 243, 273, 304, 334};
+        const int leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+        result->tm_yday =
+            before[result->tm_mon] + result->tm_mday - 1 + (leap && result->tm_mon > 1);
+    }
+    return result;
 }
 
 /* Device nodes. libdrm creates them on systems that have a /dev; this one does not. */
