@@ -244,6 +244,51 @@ static int submit_one(uint64_t va, uint32_t bytes);
  * `OOPS_MAX_IB_CHAIN` bounds it. A corrupt stream that chains to itself would otherwise
  * loop here forever, and a shim that hangs is worse than one that says it gave up.
  */
+/*
+ * The dword index of the first chain packet in `dw[0..n)`, or `n` when there is none.
+ *
+ * **Packet by packet, never dword by dword.** The first version scanned every dword for
+ * something shaped like an `INDIRECT_BUFFER` header, and most dwords in a stream are
+ * not headers: they are register values, addresses and shader constants. Any payload
+ * word of the form 0xC???3F?? was taken for a chain, the stream was cut mid-packet, and
+ * a "target" read out of the next two payload words was submitted as a stream of its
+ * own - a truncated packet and a jump into whatever those words named. That is a GPU
+ * hang that depends on the values a frame happens to carry, which is what SuperTuxKart
+ * showed: intermittent, at screen changes, and unmoved by every change to memory.
+ *
+ * A header says how long its packet is, so only headers are looked at. Type 3 and type
+ * 0 carry a count in bits 29:16 and span count + 2 dwords; type 2 is one dword of
+ * filler; `0xffff1000` is radeonsi's one-dword NOP (a type-3 NOP whose all-ones count
+ * means "no payload", `ac_cmdbuf.c`). A type-1 header is not a valid packet, and the
+ * walk stops there rather than guessing, leaving the stream whole.
+ */
+uint32_t oops_winsys_find_chain(const uint32_t *dw, uint32_t n) {
+    uint32_t i = 0;
+
+    while (i < n) {
+        const uint32_t header = dw[i];
+        const uint32_t type = header >> 30;
+
+        if (header == 0xffff1000u) {
+            i += 1u;
+            continue;
+        }
+        if (type == 2u) {
+            i += 1u;
+            continue;
+        }
+        if (type == 1u) {
+            return n;
+        }
+        if (type == 3u && ((header >> 8) & 0xffu) == PM4_TYPE3_INDIRECT_BUFFER &&
+            i + 3u < n) {
+            return i;
+        }
+        i += ((header >> 16) & 0x3fffu) + 2u;
+    }
+    return n;
+}
+
 static int submit_chain(uint64_t va, uint32_t bytes, unsigned int depth) {
     const uint32_t *dw = (const uint32_t *)(uintptr_t)va;
     const uint32_t n = bytes / 4u;
@@ -255,12 +300,10 @@ static int submit_chain(uint64_t va, uint32_t bytes, unsigned int depth) {
         return -EIO;
     }
 
-    for (uint32_t i = 0; i + 3u < n; i++) {
-        if ((dw[i] >> 30) != 3u) {
-            continue;
-        }
-        if (((dw[i] >> 8) & 0xffu) != PM4_TYPE3_INDIRECT_BUFFER) {
-            continue;
+    {
+        const uint32_t i = oops_winsys_find_chain(dw, n);
+        if (i >= n) {
+            return submit_one(va, bytes);
         }
 
         const uint64_t target = (uint64_t)dw[i + 1] | ((uint64_t)dw[i + 2] << 32);
@@ -281,8 +324,6 @@ static int submit_chain(uint64_t va, uint32_t bytes, unsigned int depth) {
         }
         return submit_chain(target, target_dw * 4u, depth + 1u);
     }
-
-    return submit_one(va, bytes);
 }
 
 static int submit_one(uint64_t va, uint32_t bytes) {

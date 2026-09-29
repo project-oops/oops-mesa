@@ -631,8 +631,37 @@ static void test_an_address_keeps_the_pages_it_maps(void) {
     oops_winsys_gem_close(c);
 }
 
+#define PKT3(op, count) ((3u << 30) | (((count) & 0x3fffu) << 16) | ((op) << 8))
+
+static void test_a_chain_is_found_only_at_a_packet_header(void) {
+    /* A payload word shaped like an INDIRECT_BUFFER header is data, not a chain: the
+     * old dword scan split streams on such words and hung the GPU. */
+    const uint32_t lookalike = PKT3(0x3fu, 2u); /* 0xc0023f00 */
+    const uint32_t data_only[] = {
+        PKT3(0x76u, 3u), 0x00000010u, lookalike,
+        0x00001234u,     0x00000000u, 0xffff1000u, /* radeonsi's one-dword NOP */
+        0x80000000u,                               /* type-2 filler */
+    };
+    const uint32_t n1 = (uint32_t)(sizeof(data_only) / sizeof(data_only[0]));
+    check(oops_winsys_find_chain(data_only, n1) == n1,
+          "a header-shaped payload word is not taken for a chain");
+
+    const uint32_t chained[] = {
+        PKT3(0x76u, 3u), 0x00000010u,     lookalike,   0x00001234u, 0x00000000u,
+        0xffff1000u,     PKT3(0x3fu, 2u), 0x00020000u, 0x00000004u, 0x00000040u,
+    };
+    const uint32_t n2 = (uint32_t)(sizeof(chained) / sizeof(chained[0]));
+    check(oops_winsys_find_chain(chained, n2) == 6u,
+          "the real chain packet after them is found at its header");
+
+    const uint32_t bad[] = {0x40000000u, PKT3(0x3fu, 2u), 0u, 0u, 0u};
+    check(oops_winsys_find_chain(bad, 5u) == 5u,
+          "a type-1 header stops the walk and leaves the stream whole");
+}
+
 int main(void) {
     printf("oops-mesa winsys host suite\n");
+    test_a_chain_is_found_only_at_a_packet_header();
     test_an_address_keeps_the_pages_it_maps();
     test_version_identifies_as_amdgpu();
     test_a_buffer_through_its_whole_life();

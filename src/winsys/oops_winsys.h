@@ -154,6 +154,10 @@ void oops_winsys_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)))
  * untranslated. */
 const void *oops_winsys_cpu_for_va(uint64_t va, uint64_t bytes);
 
+/* The dword index of the first INDIRECT_BUFFER packet in a PM4 stream of `n` dwords,
+ * walked packet by packet; `n` when there is none (submit.c). */
+uint32_t oops_winsys_find_chain(const uint32_t *dw, uint32_t n);
+
 /* `oops_winsys_log` for the lines every frame repeats - each ioctl, each submitted
  * buffer. Silent unless `winsys=debug` (or trace) is set in `/app0/oops-log`: a title
  * that runs submits hundreds a second, and the log is where its own lines go. */
