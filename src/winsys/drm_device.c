@@ -257,8 +257,9 @@ int oops_winsys_ioctl(int fd, unsigned long request, void *arg) {
     r = ioctl_dispatch(request, arg);
 
     /* Every call, numbered, so a repeated command is its own line and asking twice is
-     * distinguishable from asking once. The startup path is a few dozen calls. */
-    oops_winsys_log("ioctl #%u 0x%lx answered %d", n, request, r);
+     * distinguishable from asking once. At debug: a running title makes hundreds a
+     * second. A refusal is still logged where it is refused. */
+    oops_winsys_log_debug("ioctl #%u 0x%lx answered %d", n, request, r);
     return r;
 }
 

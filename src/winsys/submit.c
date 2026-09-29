@@ -254,7 +254,7 @@ static int submit_chain(uint64_t va, uint32_t bytes, unsigned int depth) {
         const uint64_t target = (uint64_t)dw[i + 1] | ((uint64_t)dw[i + 2] << 32);
         const uint32_t target_dw = dw[i + 3] & PM4_IB_SIZE_MASK;
 
-        oops_winsys_log(
+        oops_winsys_log_debug(
             "  chains to 0x%llx (%u dwords) at dword %u; submitting it as its own",
             (unsigned long long)target, target_dw, i);
 
@@ -348,8 +348,8 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg) {
              * leaves "the IB itself" and "a resource the IB names" as the two live
              * readings. This line settles which.
              */
-            oops_winsys_log("submitting IB at 0x%llx, %u bytes",
-                            (unsigned long long)ib->va_start, ib->ib_bytes);
+            oops_winsys_log_debug("submitting IB at 0x%llx, %u bytes",
+                                  (unsigned long long)ib->va_start, ib->ib_bytes);
             oops_winsys_dump_ib(ib->va_start, ib->ib_bytes);
             if (submit_chain(ib->va_start, ib->ib_bytes, 0u) != 0) {
                 oops_winsys_log("the driver refused an instruction buffer of %u bytes",

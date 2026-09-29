@@ -26,13 +26,34 @@ extern void oops_klog(const char *tag, const char *msg);
 extern void oops_stderr_flush_partial(void);
 #endif
 
+static void winsys_vlog(const char *fmt, va_list ap)
+    __attribute__((format(printf, 1, 0)));
+
 void oops_winsys_log(const char *fmt, ...) {
-    char line[256];
     va_list ap;
 
     va_start(ap, fmt);
-    vsnprintf(line, sizeof(line), fmt, ap);
+    winsys_vlog(fmt, ap);
     va_end(ap);
+}
+
+void oops_winsys_log_debug(const char *fmt, ...) {
+    va_list ap;
+
+#ifndef OOPS_HOST_BUILD
+    if (oops_log_channel_level("winsys", OOPS_LOG_INFO) < OOPS_LOG_DEBUG) {
+        return;
+    }
+#endif
+    va_start(ap, fmt);
+    winsys_vlog(fmt, ap);
+    va_end(ap);
+}
+
+static void winsys_vlog(const char *fmt, va_list ap) {
+    char line[256];
+
+    vsnprintf(line, sizeof(line), fmt, ap);
 
 #ifdef OOPS_HOST_BUILD
     fprintf(stderr, "[oops-mesa winsys] %s\n", line);

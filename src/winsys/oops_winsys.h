@@ -150,6 +150,11 @@ void oops_winsys_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)))
  * untranslated. */
 const void *oops_winsys_cpu_for_va(uint64_t va, uint64_t bytes);
 
+/* `oops_winsys_log` for the lines every frame repeats - each ioctl, each submitted
+ * buffer. Silent unless `winsys=debug` (or trace) is set in `/app0/oops-log`: a title
+ * that runs submits hundreds a second, and the log is where its own lines go. */
+void oops_winsys_log_debug(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
 /* Log an instruction buffer's dwords. Silent unless `winsys=trace` is set in
  * `/app0/oops-log`, because it is tens of lines per submission. */
 void oops_winsys_dump_ib(uint64_t va, uint32_t bytes);
