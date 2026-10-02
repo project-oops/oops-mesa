@@ -15,7 +15,7 @@ RUN apt-get update \
       ninja-build pkg-config \
       python3 python3-pip python3-mako python3-yaml python3-packaging \
       bison flex \
-      git ca-certificates \
+      git ca-certificates curl zip unzip \
  && rm -rf /var/lib/apt/lists/*
 
 # meson comes from pip, pinned: Debian bookworm ships 1.0.1 and the pinned Mesa requires
