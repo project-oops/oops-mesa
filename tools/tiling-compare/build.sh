@@ -6,7 +6,8 @@
 # layout the display scans out, across four blocks rather than one. `make check` regenerates it
 # into build/ and compares, so a pin bump or tiler edit that changes the answer shows in the diff.
 #
-# Needs clang++ on PATH; the collection's WSL builder has it. No meson, no Mesa build, no LLVM.
+# Needs clang++ on PATH (local clang 21 on PATH first, container second, WSL fallback last).
+# No meson, no Mesa build, no LLVM.
 set -eu
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)

@@ -56,8 +56,9 @@ is written here.
 
 ## Toolchain
 
-- The Mesa build runs in the image described by `toolchain/Dockerfile`.
-- WSL `oops-builder` builds the shims' host tests.
+- Runners follow CONVENTIONS section 8: a local clang 21 on `PATH` first, container second, WSL last.
+- The Mesa build runs in the container described by `toolchain/Dockerfile`.
+- The shims' host tests build with a local clang 21 on `PATH` (or container / WSL fallback).
 - The hardware is reached through Prosperous.
 - C code is formatted with the collection `.clang-format` ([STYLE section 2](../docs/STYLE.md#formatting)),
   and `./bin/oops-mesa check` runs it.

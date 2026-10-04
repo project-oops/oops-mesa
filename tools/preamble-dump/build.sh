@@ -8,8 +8,8 @@
 # regenerates them into the build directory and fails if the tracked copies differ, so the pin
 # in dependencies.mk and these two files move together.
 #
-# Needs python3 and clang on PATH; the collection's WSL builder has both. No Mesa build, no
-# meson, no LLVM.
+# Needs python3 and clang on PATH (local clang 21 on PATH first, container second, WSL
+# fallback last). No Mesa build, no meson, no LLVM.
 set -eu
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd "$HERE/../.." && pwd)

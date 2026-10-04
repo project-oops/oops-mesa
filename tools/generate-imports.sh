@@ -28,7 +28,7 @@ SHARED="${OOPS_APPS_SYMBOLS:-$ROOT/../oops-apps/common/symbols.txt}"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# The container has `llvm-nm` and the WSL title builder has GNU `nm`; either will do.
+# The local toolchain on PATH or container has `llvm-nm`; WSL has GNU `nm`; either will do.
 if command -v llvm-nm >/dev/null 2>&1; then
     nm_cmd=llvm-nm
 elif command -v nm >/dev/null 2>&1; then
