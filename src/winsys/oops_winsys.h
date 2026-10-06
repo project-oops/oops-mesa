@@ -186,6 +186,15 @@ void oops_winsys_log_debug(const char *fmt, ...) __attribute__((format(printf, 1
  * `/app0/oops-log`, because it is tens of lines per submission. */
 void oops_winsys_dump_ib(uint64_t va, uint32_t bytes);
 
+/* How far a submission that never retires got. At `winsys=trace`,
+ * `oops_winsys_note_marks` records every address an instruction buffer's packets write
+ * or poll in memory, with the value there at submit; `oops_winsys_report_marks` prints
+ * each again after the timeout, so the last packet whose write landed bounds where the
+ * CP stopped. `oops_winsys_clear_marks` starts a submission. */
+void oops_winsys_clear_marks(void);
+void oops_winsys_note_marks(uint64_t va, uint32_t bytes);
+void oops_winsys_report_marks(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -358,6 +358,7 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg) {
     if (!arg->in.chunks || arg->in.num_chunks == 0) {
         return -EINVAL;
     }
+    oops_winsys_clear_marks();
 
     /* Drain radeonsi's CPU writes - shaders, this IB, vertex and constant data - to
      * memory before the command processor fetches any of it. radeonsi assumes the
@@ -404,6 +405,7 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg) {
             oops_winsys_log_debug("submitting IB at 0x%llx, %u bytes",
                                   (unsigned long long)ib->va_start, ib->ib_bytes);
             oops_winsys_dump_ib(ib->va_start, ib->ib_bytes);
+            oops_winsys_note_marks(ib->va_start, ib->ib_bytes);
             if (submit_chain(ib->va_start, ib->ib_bytes, 0u) != 0) {
                 oops_winsys_log("the driver refused an instruction buffer of %u bytes",
                                 ib->ib_bytes);
@@ -556,6 +558,7 @@ int oops_winsys_cs(union drm_amdgpu_cs *arg) {
                 "submission %llu did not retire in %llu us; fence still 0x%08x",
                 (unsigned long long)s_sequence + 1u, (unsigned long long)waited_us,
                 s_fence[0]);
+            oops_winsys_report_marks();
             /* Tell the context, so that a later reset query answers from something
              * observed rather than from an assumption that all is well. */
             oops_winsys_ctx_note_hang(arg->in.ctx_id);
