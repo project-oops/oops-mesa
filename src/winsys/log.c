@@ -138,6 +138,15 @@ static void mark_add(char kind, uint32_t at, uint64_t va, uint32_t ref, uint32_t
     struct oops_mark *m = &s_marks[s_nmarks++];
     m->va = va;
     m->cpu = p;
+    /* A sample or a filled size can legitimately be 0, which reads the same as never
+     * written; these destinations are poisoned first so any write shows. They are
+     * results the GPU writes before anything reads them. */
+    if (p != NULL && (kind == 'E' || kind == 'S')) {
+        *(volatile uint32_t *)(uintptr_t)p = 0x0bad0badu;
+#if defined(__x86_64__)
+        __builtin_ia32_clflush((const void *)p);
+#endif
+    }
     m->before = p ? mark_read(p) : 0;
     m->ref = ref;
     m->mask = mask;
