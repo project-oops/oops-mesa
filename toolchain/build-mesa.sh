@@ -5,6 +5,10 @@
 # options, and why:
 #
 #   gallium-drivers=radeonsi   the one driver for this GPU (D001).
+#   vulkan-drivers=amd         RADV, on the same winsys shim; patches 005 and 006 let it find
+#                              and open the device.
+#   spirv-tools=disabled       the image's glslang brings the build machine's SPIRV-Tools, which
+#                              pkg-config would otherwise offer as the target's.
 #   amd-use-llvm=false         the shader backend is ACO; no LLVM is installed or linked.
 #   llvm=disabled              nothing else may pull it in either.
 #   platforms=[]               no windowing system; presentation goes through the platform shim.
@@ -211,8 +215,11 @@ if [ -f "$BUILD/build.ninja" ] && [ "$(cat "$CROSS_STAMP" 2>/dev/null)" != "$cro
 fi
 
 echo "oops-mesa: configuring Mesa for x86_64-unknown-freebsd (log: build/mesa-configure.log)"
+# On an existing build directory `--reconfigure` is what makes a changed `-D` below take effect.
+reconfigure=()
+[ -f "$BUILD/build.ninja" ] && reconfigure=(--reconfigure)
 set +e
-meson setup "$BUILD" "$MESA" \
+meson setup "${reconfigure[@]}" "$BUILD" "$MESA" \
     --cross-file "$HERE/cross-prospero.ini" \
     --prefix /usr \
     --buildtype release \
@@ -221,7 +228,7 @@ meson setup "$BUILD" "$MESA" \
     -Dlibdrm:tests=false \
     -Dlibdrm:man-pages=disabled \
     -Dgallium-drivers=radeonsi \
-    -Dvulkan-drivers= \
+    -Dvulkan-drivers=amd \
     -Damd-use-llvm=false \
     -Dllvm=disabled \
     -Dplatforms= \
@@ -237,6 +244,7 @@ meson setup "$BUILD" "$MESA" \
     -Dxmlconfig=disabled \
     -Dzlib=disabled \
     -Dzstd=disabled \
+    -Dspirv-tools=disabled \
     -Dlibunwind=disabled \
     -Dvalgrind=disabled \
     -Dvideo-codecs= \
@@ -265,10 +273,19 @@ if [ -z "$dri_so" ]; then
     echo "oops-mesa: no DRI module in the build graph; cannot derive the archive list" >&2
     exit 1
 fi
-mapfile -t archives < <(ninja -C "$BUILD" -t commands "$dri_so" 2>/dev/null | tail -1 \
-                        | tr ' ' '\n' | sed -n 's/^\(.*\.a\)$/\1/p' | sort -u)
+# RADV's own module is the same kind of target for Vulkan; its archives join the list, so the
+# libdrm pass below covers both drivers.
+vk_so=$(ninja -C "$BUILD" -t targets all 2>/dev/null \
+        | sed -n 's/^\(src\/amd\/vulkan\/libvulkan_radeon[^:]*\.so\): .*/\1/p' | head -1)
+if [ -z "$vk_so" ]; then
+    echo "oops-mesa: no RADV module in the build graph; cannot derive its archive list" >&2
+    exit 1
+fi
+mapfile -t archives < <(for so in "$dri_so" "$vk_so"; do
+                            ninja -C "$BUILD" -t commands "$so" 2>/dev/null | tail -1
+                        done | tr ' ' '\n' | sed -n 's/^\(.*\.a\)$/\1/p' | sort -u)
 if [ "${#archives[@]}" -eq 0 ]; then
-    echo "oops-mesa: the DRI module links no archives, which cannot be right" >&2
+    echo "oops-mesa: the driver modules link no archives, which cannot be right" >&2
     exit 1
 fi
 ninja -C "$BUILD" "${archives[@]}"
@@ -296,16 +313,21 @@ done
 # members get pulled, and a name defined in several archives is harmless unless two pulled
 # objects define it. Undefined symbols are the platform C library's, resolved at load and
 # accounted for by `tools/what-is-still-needed.sh`.
-echo "oops-mesa: checking a full link for duplicate symbols"
-linklog="$ROOT/build/link-check.log"
-ninja -C "$BUILD" "$dri_so" > "$linklog" 2>&1 || true
-if grep -q "duplicate symbol" "$linklog"; then
-    echo "oops-mesa: a title linking these archives would meet a duplicate symbol:" >&2
-    grep -A3 "duplicate symbol" "$linklog" | head -12 >&2
-    exit 1
-fi
-undef=$(grep -c "undefined symbol" "$linklog" || true)
-echo "oops-mesa: no duplicate symbols; $undef undefined, which is the platform's to answer"
+echo "oops-mesa: checking a full link of each driver for duplicate symbols"
+for so in "$dri_so" "$vk_so"; do
+    case "$so" in *vulkan*) linklog="$ROOT/build/link-check-vulkan.log" ;;
+                  *) linklog="$ROOT/build/link-check.log" ;; esac
+    ninja -C "$BUILD" "$so" > "$linklog" 2>&1 || true
+    if grep -q "duplicate symbol" "$linklog"; then
+        echo "oops-mesa: a title linking $(basename "$so") would meet a duplicate symbol:" >&2
+        grep -A3 "duplicate symbol" "$linklog" | head -12 >&2
+        exit 1
+    fi
+    # lld stops reporting at its error limit, so a capped count is a floor, not a total.
+    undef=$(grep -c "undefined symbol" "$linklog" || true)
+    grep -q "too many errors emitted" "$linklog" && undef="at least $undef"
+    echo "oops-mesa: $(basename "$so"): no duplicate symbols; $undef undefined, which is the platform's to answer"
+done
 
 # The C++ half of the shim, as an archive. It touches no oops-sdk header, only libc++'s, and a
 # title's `-std=c11` would refuse it (D006). It holds `cxx_support.cpp` plus upstream libc++
@@ -356,13 +378,17 @@ ninja -C "$BUILD" src/mesa/glapi/glapi/libglapi_bridge.a >/dev/null 2>&1 || {
 # The DRI target's object defines every `*_driver_descriptor` (`drm_helper.h`) and references
 # `radeonsi_screen_create`, so it must precede `libradeonsi.a`. Paths are relative to this
 # repository, because the container mounts it at /w; `oops-mesa.mk` prefixes its own directory.
-{
-    ninja -C "$BUILD" -t commands "$dri_so" 2>/dev/null | tail -1 \
+# A Vulkan title's order comes the same way from RADV's link line.
+link_order() {
+    ninja -C "$BUILD" -t commands "$1" 2>/dev/null | tail -1 \
         | tr ' ' '\n' | sed -n 's/^\(.*\.o\)$/build\/mesa\/\1/p'
-    ninja -C "$BUILD" -t commands "$dri_so" 2>/dev/null | tail -1 \
+    ninja -C "$BUILD" -t commands "$1" 2>/dev/null | tail -1 \
         | tr ' ' '\n' | sed -n 's/^\(.*\.a\)$/build\/mesa\/\1/p'
-} > "$ROOT/build/link-order.txt"
+}
+link_order "$dri_so" > "$ROOT/build/link-order.txt"
+link_order "$vk_so" > "$ROOT/build/link-order-vulkan.txt"
 
 echo "oops-mesa: built ${#archives[@]} archives for x86_64-unknown-freebsd"
 echo "oops-mesa: $localized libdrm archives had their private symbols localized; no duplicates remain"
 echo "oops-mesa: link order for a title written to build/link-order.txt ($(wc -l < "$ROOT/build/link-order.txt" | tr -d ' ') archives)"
+echo "oops-mesa: and for a Vulkan title to build/link-order-vulkan.txt ($(wc -l < "$ROOT/build/link-order-vulkan.txt" | tr -d ' ') archives)"

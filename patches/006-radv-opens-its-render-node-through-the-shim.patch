@@ -1,0 +1,69 @@
+# 006-radv-opens-its-render-node-through-the-shim.patch
+#
+# What it changes
+#   RADV's three opens of the render node (physical-device creation, device creation and the
+#   memory-budget query), guarded by OOPS_MESA_WINSYS: radv_open_render_node, defined in
+#   radv_physical_device.h, asks the shim for a duplicate of the device descriptor
+#   (oops_winsys_open_render_node) instead of open(2) with O_RDWR.
+#
+# Why it could not be a shim
+#   The node patch 005 reports is the title's own eboot, the file the device descriptor is
+#   held on; it opens read-only and is unreachable once a title escapes to /data. RADV opens
+#   by path with libc open(2), and interposing open would capture every file the title opens.
+#
+# Applies to: mesa-26.2.2, the pin in dependencies.mk (D004).
+diff --git a/src/amd/vulkan/radv_device.c b/src/amd/vulkan/radv_device.c
+index 6d023d3a..094dd4bc 100644
+--- a/src/amd/vulkan/radv_device.c
++++ b/src/amd/vulkan/radv_device.c
+@@ -1320,7 +1320,7 @@ radv_create_winsys(struct radv_device *device)
+ 
+       const char *path = drm_device->nodes[DRM_NODE_RENDER];
+ 
+-      fd = open(path, O_RDWR | O_CLOEXEC);
++      fd = radv_open_render_node(path);
+       drmFreeDevice(&drm_device);
+       if (fd < 0)
+          return VK_ERROR_INITIALIZATION_FAILED;
+diff --git a/src/amd/vulkan/radv_physical_device.c b/src/amd/vulkan/radv_physical_device.c
+index e23d3755..a24766ff 100644
+--- a/src/amd/vulkan/radv_physical_device.c
++++ b/src/amd/vulkan/radv_physical_device.c
+@@ -2529,7 +2529,7 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
+    enum radv_drm_device_type drm_device_type;
+    drmVersionPtr version;
+ 
+-   fd = open(path, O_RDWR | O_CLOEXEC);
++   fd = radv_open_render_node(path);
+    if (fd < 0) {
+       return vk_errorf(instance, VK_ERROR_INCOMPATIBLE_DRIVER, "Could not open device %s: %m", path);
+    }
+@@ -3184,7 +3184,7 @@ radv_create_drm_device_locked(struct radv_physical_device *pdev)
+ 
+       const char *path = drm_device->nodes[DRM_NODE_RENDER];
+ 
+-      fd = open(path, O_RDWR | O_CLOEXEC);
++      fd = radv_open_render_node(path);
+       drmFreeDevice(&drm_device);
+       if (fd < 0)
+          return;
+diff --git a/src/amd/vulkan/radv_physical_device.h b/src/amd/vulkan/radv_physical_device.h
+index b2b681c1..1065e194 100644
+--- a/src/amd/vulkan/radv_physical_device.h
++++ b/src/amd/vulkan/radv_physical_device.h
+@@ -21,6 +21,15 @@
+ #include "radv_radeon_winsys.h"
+ #include "wsi_common.h"
+ 
++#ifdef OOPS_MESA_WINSYS
++/* The render node is a record, not a device file: the shim hands out a duplicate of the
++ * descriptor it holds, which RADV may close as it closes what it opened. */
++#include "oops_winsys.h"
++#define radv_open_render_node(path) ((void)(path), oops_winsys_open_render_node())
++#else
++#define radv_open_render_node(path) open((path), O_RDWR | O_CLOEXEC)
++#endif
++
+ #include "compiler/shader_enums.h"
+ #include "nir_shader_compiler_options.h"
+ 

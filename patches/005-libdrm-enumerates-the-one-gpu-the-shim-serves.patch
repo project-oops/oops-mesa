@@ -1,0 +1,88 @@
+# 005-libdrm-enumerates-the-one-gpu-the-shim-serves.patch
+#
+# What it changes
+#   Three libdrm device lookups, guarded by OOPS_MESA_WINSYS: drmGetDevices2, drmGetDevice2 and
+#   drmGetDeviceFromDevId answer with one PCI device built from the shim's record
+#   (oops_winsys_pci_device, oops_winsys_render_node), through libdrm's own allocator so
+#   drmFreeDevice frees it. RADV finds its GPU with drmGetDevices2, reopens it by device number
+#   with drmGetDeviceFromDevId, and requires the PCI bus address drmGetDevice2 reports
+#   (ac_gpu_info.c, require_pci_bus_info); radeonsi asks drmGetDevice2 only for the loader's
+#   PCI id, where vendor 0x1002 and device 0 still select radeonsi by the kernel driver name.
+#
+# Why it could not be a shim
+#   The upstream functions walk /dev/dri and sysfs and refuse a descriptor that is not a
+#   character device. Neither exists here, and the record has to come from libdrm's static
+#   allocator for libdrm's free to release it.
+#
+# Applies to: libdrm 2.4.133 after patches 001 and 004 (D005).
+--- a/subprojects/libdrm-2.4.133/xf86drm.c
++++ b/subprojects/libdrm-2.4.133/xf86drm.c
+@@ -4107,6 +4107,32 @@
+     return device;
+ }
+ 
++#ifdef OOPS_MESA_WINSYS
++/* No /dev/dri or sysfs exists to walk: every lookup answers with the one GPU the shim
++ * serves. drmDeviceAlloc copies a whole node-name length, hence the buffer. */
++static int oops_winsys_drm_device(drmDevicePtr *device)
++{
++    struct oops_winsys_pci p;
++    char node[PATH_MAX] = { 0 }, *addr;
++    drmDevicePtr dev;
++
++    oops_winsys_pci_device(&p);
++    strncpy(node, oops_winsys_render_node(), sizeof(node) - 1);
++    dev = drmDeviceAlloc(DRM_NODE_RENDER, node, sizeof(drmPciBusInfo),
++                         sizeof(drmPciDeviceInfo), &addr);
++    if (!dev)
++        return -ENOMEM;
++    dev->bustype = DRM_BUS_PCI;
++    dev->businfo.pci = (drmPciBusInfoPtr)addr;
++    *dev->businfo.pci = (drmPciBusInfo){ p.domain, p.bus, p.dev, p.func };
++    dev->deviceinfo.pci = (drmPciDeviceInfoPtr)(addr + sizeof(drmPciBusInfo));
++    *dev->deviceinfo.pci = (drmPciDeviceInfo){ p.vendor_id, p.device_id, p.subvendor_id,
++                                               p.subdevice_id, p.revision_id };
++    *device = dev;
++    return 0;
++}
++#endif
++
+ static int drmProcessPciDevice(drmDevicePtr *device,
+                                const char *node, int node_type,
+                                int maj, int min, bool fetch_deviceinfo,
+@@ -4658,6 +4684,11 @@
+  */
+ drm_public int drmGetDeviceFromDevId(dev_t find_rdev, uint32_t flags, drmDevicePtr *device)
+ {
++#ifdef OOPS_MESA_WINSYS
++    if (device == NULL || drm_device_validate_flags(flags))
++        return -EINVAL;
++    return oops_winsys_drm_device(device);
++#endif
+ #ifdef __OpenBSD__
+     /*
+      * DRI device nodes on OpenBSD are not in their own directory, they reside
+@@ -4810,6 +4841,9 @@
+  */
+ drm_public int drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *device)
+ {
++#ifdef OOPS_MESA_WINSYS
++    return fd == -1 ? -EINVAL : drmGetDeviceFromDevId(0, flags, device);
++#endif
+     struct stat sbuf;
+ 
+     if (fd == -1)
+@@ -4857,6 +4891,13 @@
+ drm_public int drmGetDevices2(uint32_t flags, drmDevicePtr devices[],
+                               int max_devices)
+ {
++#ifdef OOPS_MESA_WINSYS
++    if (drm_device_validate_flags(flags))
++        return -EINVAL;
++    if (devices == NULL || max_devices < 1)
++        return 1;
++    return oops_winsys_drm_device(&devices[0]) ? -ENODEV : 1;
++#endif
+     drmDevicePtr local_devices[MAX_DRM_NODES];
+     drmDevicePtr device;
+     DIR *sysdir;

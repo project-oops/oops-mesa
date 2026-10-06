@@ -15,6 +15,7 @@ RUN apt-get update \
       ninja-build pkg-config \
       python3 python3-pip python3-mako python3-yaml python3-packaging \
       bison flex \
+      glslang-tools \
       git ca-certificates curl zip unzip \
  && rm -rf /var/lib/apt/lists/*
 
@@ -22,5 +23,7 @@ RUN apt-get update \
 # `meson_version >= 1.4.0`.
 RUN pip3 install --no-cache-dir --break-system-packages meson==1.9.1
 
-# No LLVM package: the AMD shader backend here is ACO, which needs none.
+# `glslang-tools` is a build-machine tool: RADV compiles its internal shaders to SPIR-V with
+# `glslangValidator` at build time. No LLVM package: the AMD shader backend here is ACO, which
+# needs none.
 WORKDIR /w

@@ -11,6 +11,11 @@ Open defects, gaps and unmeasured facts, one line each. Delete a line when it is
 - Compute has not been run. `launch_grid` submits on the graphics ring, so the refused COMPUTE `HW_IP_INFO` does not block it; the first run reaching it names what does.
 - Tessellation has not been run. radeonsi allocates its own factor ring and writes `VGT_TF_RING_SIZE`/`VGT_TF_MEMORY_BASE` from the command buffer (`ac_cmdbuf_cp.c:359-367`); whether that holds against the driver-global ring `sceAgcDriverSetTFRing` sets is unmeasured.
 - A registered VideoOut buffer set cannot be extended (0x80290010); replacing it through `sceVideoOutUnregisterBuffers` is unmeasured, and oops-sdk does not bind that call.
+- RADV builds and links but no title runs it: `vulkaninfo` needs a Vulkan loader, or a title that calls RADV's ICD entry points from the archives.
+- RADV maps buffers with libc `mmap()` (`radv_amdgpu_bo.c:744`), not the `drm_mmap` patch 001 redirects, so on the device descriptor it maps the title's eboot; `munmap` likewise escapes patch 004.
+- RADV's render node is `/app0/eboot.bin`, so physical-device creation fails its `stat` after a title escapes to `/data`.
+- RADV's fences need `SYNCOBJ_WAIT`/`RESET`/`SIGNAL`, which the winsys refuses, and its secondary command buffers need IB2, which `submit.c` takes for a tail chain.
+- Patch 005 gives radeonsi's loader a PCI identity (vendor 0x1002, device 0) it lacked; GL has not been run on hardware since.
 - `pros close` cannot end a parked title.
 - `preamble_dump.c` may use the pre-GFX10 `pbb_max_alloc_count` (128 versus 341).
 - `runtime_test` FAIL lines are swallowed by its own `write` override.

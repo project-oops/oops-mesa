@@ -27,6 +27,25 @@ int oops_winsys_open(void);
  * first escapes the sandbox and loses that path. Declared here because it is a
  * constructor's target and must not be static. See the note on it in `drm_device.c`. */
 int oops_winsys_claim_fd(void);
+
+/* The one GPU as libdrm describes a device (patch 005). There is no `/dev/dri` or
+ * sysfs, so every libdrm device lookup answers with this record. */
+struct oops_winsys_pci {
+    uint16_t domain;
+    uint8_t bus, dev, func;
+    uint16_t vendor_id, device_id, subvendor_id, subdevice_id;
+    uint8_t revision_id;
+};
+void oops_winsys_pci_device(struct oops_winsys_pci *out);
+
+/* The render node path in that record: the file the device descriptor was opened on,
+ * so `stat` on it succeeds while `/app0` is reachable. */
+const char *oops_winsys_render_node(void);
+
+/* A fresh descriptor for a driver that opens the render node itself and closes what it
+ * opened (RADV, patch 006): a duplicate of the claimed one, or a negative errno. */
+int oops_winsys_open_render_node(void);
+
 int oops_winsys_close(int fd);
 
 /* The command set. A command with nothing behind it returns -ENOSYS and says which one

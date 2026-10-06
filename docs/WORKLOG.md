@@ -160,3 +160,7 @@ One entry per milestone. Between milestones, commit messages are the record.
   RADV requires (`ac_gpu_info.c:1461`). RADV maps through libc `mmap()`, not `drm_mmap`
   (`radv_amdgpu_bo.c:744`), and the shim takes every `INDIRECT_BUFFER` as a tail chain, which an
   IB2 is not (`src/winsys/submit.c:283`).
+- RADV builds and links beside radeonsi (`-Dvulkan-drivers=amd`): 50 archives, and a Vulkan link
+  order of 132 entries. libdrm enumerates the one GPU from the shim's record (patch 005) and RADV
+  opens it through the shim (patch 006). The image gained `glslangValidator`, and SPIRV-Tools is
+  disabled because the image's copy is the build machine's.

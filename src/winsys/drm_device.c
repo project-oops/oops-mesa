@@ -38,6 +38,9 @@
 
 static int s_winsys_fd = OOPS_WINSYS_FD;
 
+/* The file the device descriptor is opened on, and the render node libdrm reports. */
+#define OOPS_WINSYS_DEVICE_PATH "/app0/eboot.bin"
+
 /* GB_ADDR_CONFIG (dword 0x263e), derived rather than read: the CP rejects a userspace
  * read of it as privileged. The value inverts Mesa's addrlib against oops-sdk's
  * agc_tiler.c, which draws correctly on hardware: of the candidates addrlib accepts
@@ -453,7 +456,7 @@ int oops_winsys_claim_fd(void) {
         return s_winsys_fd; /* already held */
     }
 
-    int f = open("/app0/eboot.bin", O_RDONLY);
+    int f = open(OOPS_WINSYS_DEVICE_PATH, O_RDONLY);
     if (f >= 0) {
         s_winsys_fd = f;
         return s_winsys_fd;
@@ -492,6 +495,41 @@ int oops_winsys_open(void) {
     /* The descriptor was taken in `.init_array`; this answers whether a device exists.
      */
     return oops_winsys_claim_fd();
+}
+
+/*
+ * The device record libdrm hands out (patch 005). Assumed: nothing on this platform
+ * reports a PCI address or ids to a userland title. The vendor is AMD's, which is what
+ * RADV and Mesa's loader key on (`ATI_VENDOR_ID`); the device id stays 0 as in the
+ * device description, so no chip table matches and the loader falls through to the
+ * kernel driver name, `amdgpu`, as before.
+ */
+void oops_winsys_pci_device(struct oops_winsys_pci *out) {
+    memset(out, 0, sizeof(*out));
+    out->vendor_id = 0x1002;
+    out->subvendor_id = 0x1002;
+}
+
+const char *oops_winsys_render_node(void) {
+    return OOPS_WINSYS_DEVICE_PATH;
+}
+
+/* `F_DUPFD`, not `F_DUPFD_CLOEXEC`, which this platform answers with EOPNOTSUPP. The
+ * copy names the same file, so libdrm's `fstat` keyed table gives it the same device,
+ * and the ioctl gate serves it as an open duplicate. */
+int oops_winsys_open_render_node(void) {
+    int held = oops_winsys_claim_fd();
+
+    if (held == OOPS_WINSYS_FD) {
+        return -ENODEV;
+    }
+    int f = fcntl(held, F_DUPFD, 3);
+    if (f < 0) {
+        oops_winsys_log("could not duplicate the device descriptor %d (errno %d)", held,
+                        errno);
+        return -errno;
+    }
+    return f;
 }
 
 int oops_winsys_close(int fd) {
