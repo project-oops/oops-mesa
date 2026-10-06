@@ -134,7 +134,7 @@ static void mark_add(char kind, uint32_t at, uint64_t va, uint32_t ref, uint32_t
         return;
     }
     const volatile uint32_t *p =
-        (const volatile uint32_t *)oops_winsys_cpu_for_va(va, 4);
+        (const volatile uint32_t *)oops_winsys_cpu_map_va(va, 4);
     struct oops_mark *m = &s_marks[s_nmarks++];
     m->va = va;
     m->cpu = p;

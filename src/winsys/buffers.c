@@ -787,3 +787,26 @@ const void *oops_winsys_cpu_for_va(uint64_t va, uint64_t bytes) {
     }
     return NULL;
 }
+
+/* As `oops_winsys_cpu_for_va`, but a buffer radeonsi never mapped (an unmappable
+ * fence or filled-size buffer) is given its CPU mapping first, as `oops_winsys_mmap`
+ * would. For diagnostics that must read what the GPU wrote there. */
+const void *oops_winsys_cpu_map_va(uint64_t va, uint64_t bytes) {
+    for (uint32_t i = 0; i < OOPS_WINSYS_MAX_BO; i++) {
+        struct oops_winsys_bo *bo = &s_bo[i];
+        if (!bo->live || bo->gpu_va == 0u || va < bo->gpu_va ||
+            va >= bo->gpu_va + bo->size) {
+            continue;
+        }
+        if (!bo->cpu_ptr) {
+            void *v = NULL;
+            if (oops_mem_map_direct(&v, (size_t)bo->size, OOPS_PROT_CPU_RW, 0, bo->phys,
+                                    OOPS_WINSYS_PAGE) != 0) {
+                return NULL;
+            }
+            bo->cpu_ptr = v;
+        }
+        break;
+    }
+    return oops_winsys_cpu_for_va(va, bytes);
+}

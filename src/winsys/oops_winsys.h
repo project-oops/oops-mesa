@@ -173,6 +173,9 @@ void oops_winsys_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)))
  * untranslated. */
 const void *oops_winsys_cpu_for_va(uint64_t va, uint64_t bytes);
 
+/* The same, mapping the buffer for the CPU first if nothing has (diagnostics only). */
+const void *oops_winsys_cpu_map_va(uint64_t va, uint64_t bytes);
+
 /* The dword index of the first INDIRECT_BUFFER packet in a PM4 stream of `n` dwords,
  * walked packet by packet; `n` when there is none (submit.c). */
 uint32_t oops_winsys_find_chain(const uint32_t *dw, uint32_t n);
