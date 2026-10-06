@@ -115,7 +115,7 @@ struct oops_mark {
     const volatile uint32_t *cpu;
     uint32_t before, ref, mask;
     uint16_t at; /* byte offset in its IB */
-    char kind;   /* R release, W write, S filled size, P polled */
+    char kind;   /* R release, W write, S filled size, E event sample, P polled */
     uint8_t ib;
 };
 
@@ -183,6 +183,8 @@ void oops_winsys_note_marks(uint64_t va, uint32_t bytes) {
         } else if (op == 0x34u && cnt >= 3u &&
                    (b[0] & 1u)) { /* STRMOUT_BUFFER_UPDATE */
             mark_add('S', i * 4u, ((uint64_t)b[2] << 32) | b[1], 0u, ~0u);
+        } else if (op == 0x46u && cnt >= 3u) { /* EVENT_WRITE with a sample address */
+            mark_add('E', i * 4u, ((uint64_t)b[2] << 32) | (b[1] & ~7u), b[0], ~0u);
         } else if (op == 0x3cu && cnt >= 5u &&
                    (b[0] & 0x30u) == 0x10u) { /* WAIT_REG_MEM */
             mark_add('P', i * 4u, ((uint64_t)b[2] << 32) | b[1], b[3], b[4]);
