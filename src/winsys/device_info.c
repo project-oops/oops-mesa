@@ -77,10 +77,11 @@ unsigned oops_winsys_device_info(struct drm_amdgpu_info_device *out) {
     }
     assumed++;
 
-    /* Sixteen render backends, all enabled, from the same family shape. */
+    /* Measured. Sixteen render backends, all enabled: obSCEne's
+     * 166-agc/zpass-counters check read max-render-backends 0x10 and
+     * enabled-rb-mask 0xffff on firmware 12.40. */
     out->num_rb_pipes = 16;
     out->enabled_rb_pipes_mask = 0xffff;
-    assumed++;
 
     /* Eight graphics contexts, the GFX10 hardware figure. */
     out->num_hw_gfx_contexts = 8;

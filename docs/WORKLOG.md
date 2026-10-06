@@ -141,3 +141,17 @@ One entry per milestone. Between milestones, commit messages are the record.
   Mesa build exports, 454 of 856, not by the driver.
 - A GL name the build does not define resolves to a stub that refuses by name; a null there is a
   call to address zero.
+
+## 2026-10-06 - Three obSCEne answers and what they change
+
+- The render-backend count is measured: 16, mask `0xffff` (obSCEne `166-agc/zpass-counters`).
+- `WAIT_REG_MEM64` across submissions: the rows give consumer fence-hit 0 and woke-after-write 0
+  in both waking arms, so no wake was observed. Submission stays synchronous; no change.
+- `sceAgcSuspendPoint` blocks outside a flip loop and every timing row reads 0. `submit.c` does
+  not call it; no change until a timing exists.
+- `PA_SU_POLY_OFFSET_CLAMP`: a 0.1 clamp stored 0.6 over a 0.5 quad, so the clamp takes effect
+  and `GL_ARB_polygon_offset_clamp` stays advertised. Clamp 0 stored no offset at all, where GL
+  reads 0 as unclamped; that row is re-measured.
+- `fenv.h` is staged from `lib/msun/x86`; its out-of-line half was already in libm.
+- radeonsi allocates the tessellation factor ring itself and programs it from the command buffer;
+  the kernel does not supply it on Linux either.

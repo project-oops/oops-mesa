@@ -5,10 +5,12 @@ Open defects, gaps and unmeasured facts, one line each. Delete a line when it is
 - Sparse `VA_OP_REPLACE`/`CLEAR` is refused though Mesa advertises sparse.
 - `ARB_sync` works only because submission is synchronous.
 - Asynchronous submission is blocked on whether a `WAIT_REG_MEM` packet inside a DCB stalls the GPU.
-- `transform_feedback.draw_xfb_stream_test` hangs the GPU.
+- `transform_feedback.draw_xfb_stream_test` hangs the GPU. GFX10 streamout uses no GDS; the CP waits in its sequence are the suspects: `WAIT_REG_MEM` on `CP_STRMOUT_CNTL` (`mesa/src/amd/common/ac_cmdbuf.c:1042`) and `STRMOUT_BUFFER_UPDATE` from memory (`si_state_streamout.c:322`).
 - The CTS `.qpa` file is empty because libc `open()` writes store nothing.
 - `KHR-GL46` has not been run.
-- A registered VideoOut buffer set cannot be extended (0x80290010).
+- Compute has not been run. `launch_grid` submits on the graphics ring, so the refused COMPUTE `HW_IP_INFO` does not block it; the first run reaching it names what does.
+- Tessellation has not been run. radeonsi allocates its own factor ring and writes `VGT_TF_RING_SIZE`/`VGT_TF_MEMORY_BASE` from the command buffer (`ac_cmdbuf_cp.c:359-367`); whether that holds against the driver-global ring `sceAgcDriverSetTFRing` sets is unmeasured.
+- A registered VideoOut buffer set cannot be extended (0x80290010); replacing it through `sceVideoOutUnregisterBuffers` is unmeasured, and oops-sdk does not bind that call.
 - `pros close` cannot end a parked title.
 - `preamble_dump.c` may use the pre-GFX10 `pbb_max_alloc_count` (128 versus 341).
 - `runtime_test` FAIL lines are swallowed by its own `write` override.

@@ -16,6 +16,7 @@
 #   sys/amd64/include                    ->  usr/include/machine/
 #   sys/x86/include                      ->  usr/include/x86/
 #   lib/msun/src/math.h                  ->  usr/include/math.h      (it ships with libm)
+#   lib/msun/x86/fenv.h                  ->  usr/include/fenv.h      (likewise; amd64 uses x86's)
 #
 # `./bin/oops-mesa build` runs this before it configures.
 set -eu
@@ -92,6 +93,10 @@ done
 # math.h ships with msun, not include/; amd64 uses the generic variant.
 git -C "$SRC" archive "$PIN" lib/msun/src/math.h | tar -x -C "$INC" --strip-components=3
 
+# fenv.h ships with msun too (lib/msun/Makefile INCS). amd64 takes the x86 one, whose bodies
+# are inline and whose out-of-line half is the amd64/fenv.c build-mesa.sh compiles into libm.
+git -C "$SRC" archive "$PIN" lib/msun/x86/fenv.h | tar -x -C "$INC" --strip-components=3
+
 # Other architectures inside include/, and every non-header file the source trees carry.
 rm -rf "$INC/arm" "$INC/i386"
 find "$INC" -type f ! -name '*.h' -delete
@@ -127,8 +132,8 @@ for f in __config_site __assertion_handler; do
 done
 
 missing=""
-for h in errno.h stdio.h stdlib.h string.h pthread.h math.h time.h fcntl.h stdint.h osreldate.h \
-         c++/v1/cstdint c++/v1/mutex c++/v1/__config_site; do
+for h in errno.h stdio.h stdlib.h string.h pthread.h math.h fenv.h ieeefp.h time.h fcntl.h \
+         stdint.h osreldate.h c++/v1/cstdint c++/v1/mutex c++/v1/__config_site; do
     [ -f "$INC/$h" ] || missing="$missing $h"
 done
 if [ -n "$missing" ]; then
