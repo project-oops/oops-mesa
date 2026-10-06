@@ -155,3 +155,8 @@ One entry per milestone. Between milestones, commit messages are the record.
 - `fenv.h` is staged from `lib/msun/x86`; its out-of-line half was already in libm.
 - radeonsi allocates the tessellation factor ring itself and programs it from the command buffer;
   the kernel does not supply it on Linux either.
+- RADV against the shim, read from source: of 58 interface rows, 27 are served, 18 trivial, 9 need
+  a hardware fact and 4 are hard. `vulkaninfo` stops at device enumeration and the PCI bus info
+  RADV requires (`ac_gpu_info.c:1461`). RADV maps through libc `mmap()`, not `drm_mmap`
+  (`radv_amdgpu_bo.c:744`), and the shim takes every `INDIRECT_BUFFER` as a tail chain, which an
+  IB2 is not (`src/winsys/submit.c:283`).
